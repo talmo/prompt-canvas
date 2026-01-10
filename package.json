@@ -1,0 +1,82 @@
+{
+  "name": "prompt-canvas",
+  "displayName": "Prompt Canvas",
+  "description": "Notebook-like interface for prompt queue markdown files",
+  "version": "0.1.0",
+  "publisher": "talmo",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "promptCanvas.editor",
+        "displayName": "Prompt Canvas",
+        "selector": [
+          { "filenamePattern": "PROMPT_QUEUE.md" },
+          { "filenamePattern": "*.queue.md" }
+        ],
+        "priority": "default"
+      }
+    ],
+    "configuration": {
+      "title": "Prompt Canvas",
+      "properties": {
+        "promptCanvas.filePatterns": {
+          "type": "array",
+          "default": ["PROMPT_QUEUE.md", "*.queue.md"],
+          "description": "File patterns to open with Prompt Canvas"
+        },
+        "promptCanvas.autoCleanTUI": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-clean TUI artifacts on paste"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "promptCanvas.newPrompt",
+        "title": "New Prompt",
+        "category": "Prompt Canvas"
+      },
+      {
+        "command": "promptCanvas.openAsText",
+        "title": "Open as Plain Text",
+        "category": "Prompt Canvas"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "promptCanvas.newPrompt",
+        "key": "shift+enter",
+        "when": "activeCustomEditorId == promptCanvas.editor"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js && cd webview-ui && npm run build",
+    "watch": "concurrently \"node esbuild.js --watch\" \"cd webview-ui && npm run build -- --watch\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "tsc --noEmit && cd webview-ui && tsc --noEmit",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vitest/coverage-v8": "^3.2.0",
+    "concurrently": "^9.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "nanoid": "^5.0.0"
+  }
+}
