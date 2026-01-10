@@ -39,6 +39,8 @@ export function StatusBadge({ status, onClick }: StatusBadgeProps) {
     <button
       type="button"
       onClick={onClick}
+      data-testid="status-badge"
+      data-status={status}
       className={clsx(
         'inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border',
         'transition-fast hover:opacity-80',

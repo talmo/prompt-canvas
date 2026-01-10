@@ -50,6 +50,9 @@ export function PromptGroup({
       <button
         type="button"
         onClick={onToggleCollapse}
+        data-testid="group-header"
+        data-group-id={groupId}
+        data-collapsed={isCollapsed}
         className={clsx(
           'w-full flex items-center gap-2 px-3 py-2 mb-2',
           'text-left text-sm font-medium',

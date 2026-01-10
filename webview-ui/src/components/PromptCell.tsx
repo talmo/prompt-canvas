@@ -108,6 +108,8 @@ export const PromptCell = forwardRef<HTMLDivElement, PromptCellProps>(
         animate={{ opacity: isDragging ? 0.5 : 1, y: 0 }}
         exit={{ opacity: 0, height: 0, marginBottom: 0 }}
         transition={{ duration: 0.2 }}
+        data-testid="prompt-cell"
+        data-prompt-id={prompt.id}
         className={clsx(
           'group relative rounded-lg border transition-all',
           'bg-[var(--vscode-editor-background)]',
