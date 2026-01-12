@@ -18,6 +18,7 @@ scratch/
 # VS Code extension testing
 .vscode-test/
 .wdio-vscode-service/
+.playwright-mcp/
 
 # Claude Code settings
 .claude/

@@ -21,4 +21,9 @@ export default defineConfig({
       },
     },
   },
+  // Dev server configuration for test harness
+  server: {
+    port: 5173,
+    open: '/test-harness.html',
+  },
 });

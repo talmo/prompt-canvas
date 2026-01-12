@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Prompt Canvas - Test Harness</title>
+    <style>
+      /* Test harness controls */
+      #test-controls {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: #1e1e1e;
+        border-bottom: 1px solid #333;
+        padding: 8px 16px;
+        z-index: 9999;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 13px;
+        color: #ccc;
+      }
+      #test-controls label {
+        color: #888;
+      }
+      #test-controls select, #test-controls button {
+        background: #333;
+        color: #fff;
+        border: 1px solid #555;
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #test-controls select:hover, #test-controls button:hover {
+        background: #444;
+      }
+      #test-controls .spacer {
+        flex: 1;
+      }
+      #test-controls .status {
+        color: #4ec9b0;
+        font-size: 12px;
+      }
+      /* Offset the webview content */
+      #root {
+        margin-top: 44px;
+      }
+    </style>
+    <script>
+      // ============================================================
+      // VS Code API Mock - MUST be defined before webview script loads
+      // ============================================================
+      const mockState = {};
+      const messageLog = [];
+
+      function acquireVsCodeApi() {
+        return {
+          postMessage(message) {
+            console.log('[Mock VS Code] Received message:', message);
+            messageLog.push({ direction: 'from-webview', message, timestamp: Date.now() });
+
+            // Handle the ready message by sending document
+            if (message.type === 'ready') {
+              console.log('[Mock VS Code] Webview ready, sending document...');
+              setTimeout(() => loadSelectedFixture(), 100);
+            }
+
+            // Handle content changes (just log them)
+            if (message.type === 'contentChanged') {
+              updateStatus('Document changed');
+            }
+
+            // Handle clipboard
+            if (message.type === 'copyToClipboard') {
+              navigator.clipboard.writeText(message.text).then(() => {
+                updateStatus('Copied to clipboard');
+              });
+            }
+          },
+          getState() {
+            return mockState.data;
+          },
+          setState(state) {
+            mockState.data = state;
+          }
+        };
+      }
+
+      // ============================================================
+      // Test Fixtures - PromptDocument objects
+      // ============================================================
+      const TEST_FIXTURES = {
+        'v2-full': {
+          name: 'v2.0 Full Example',
+          document: {
+            fileMetadata: { version: '2.0', groups: {} },
+            sets: [
+              { id: 'set1', name: 'Investigation: v2.0 Format Demo', active: true, collapsed: false, created: '2026-01-12T00:00:00Z' },
+              { id: 'set2', name: 'Backlog', active: false, collapsed: true, created: '2026-01-12T00:00:00Z' }
+            ],
+            sessions: [
+              { id: 'sess1', name: 'Planning', setId: 'set1' },
+              { id: 'sess2', name: 'Implementation', setId: 'set1' },
+              { id: 'sess3', setId: 'set2' }
+            ],
+            prompts: [
+              { id: 'p1', content: 'Look at how the codebase is structured.\nFind relevant files and patterns.', metadata: { id: 'p1', name: 'Research existing patterns', setId: 'set1', sessionId: 'sess1', status: 'done', created: '2026-01-12T00:00:00Z' } },
+              { id: 'p2', content: 'Based on research, design the implementation.\n\n#### Key considerations\n- Keep it simple\n- Follow existing patterns', metadata: { id: 'p2', name: 'Design the approach', setId: 'set1', sessionId: 'sess1', status: 'active', created: '2026-01-12T00:01:00Z' } },
+              { id: 'p3', content: 'Write the main functionality.', metadata: { id: 'p3', name: 'Implement core feature', setId: 'set1', sessionId: 'sess2', status: 'queue', created: '2026-01-12T00:02:00Z' } },
+              { id: 'p4', content: 'Cover edge cases with unit tests.', metadata: { id: 'p4', name: 'Add tests', setId: 'set1', sessionId: 'sess2', status: 'queue', created: '2026-01-12T00:03:00Z' } },
+              { id: 'p5', content: 'Future feature idea 1', metadata: { id: 'p5', setId: 'set2', sessionId: 'sess3', status: 'queue', created: '2026-01-12T00:04:00Z' } },
+              { id: 'p6', content: 'Future feature idea 2', metadata: { id: 'p6', setId: 'set2', sessionId: 'sess3', status: 'queue', created: '2026-01-12T00:05:00Z' } }
+            ],
+            trailingNewline: true
+          }
+        },
+        'v2-simple': {
+          name: 'v2.0 Simple (1 set, 3 prompts)',
+          document: {
+            fileMetadata: { version: '2.0', groups: {} },
+            sets: [
+              { id: 'set1', name: 'My Tasks', active: true, collapsed: false, created: '2026-01-12T00:00:00Z' }
+            ],
+            sessions: [],
+            prompts: [
+              { id: 'p1', content: 'First task - already done', metadata: { id: 'p1', setId: 'set1', status: 'done', created: '2026-01-12T00:00:00Z' } },
+              { id: 'p2', content: 'Second task - currently working', metadata: { id: 'p2', setId: 'set1', status: 'active', created: '2026-01-12T00:01:00Z' } },
+              { id: 'p3', content: 'Third task - in queue', metadata: { id: 'p3', setId: 'set1', status: 'queue', created: '2026-01-12T00:02:00Z' } }
+            ],
+            trailingNewline: true
+          }
+        },
+        'multi-set': {
+          name: 'Multiple Sets',
+          document: {
+            fileMetadata: { version: '2.0', groups: {} },
+            sets: [
+              { id: 'set1', name: 'Active Investigation', active: true, collapsed: false, created: '2026-01-12T00:00:00Z' },
+              { id: 'set2', name: 'Completed Work', active: false, collapsed: true, created: '2026-01-12T00:00:00Z' },
+              { id: 'set3', name: 'Future Ideas', active: false, collapsed: false, created: '2026-01-12T00:00:00Z' }
+            ],
+            sessions: [],
+            prompts: [
+              { id: 'p1', content: 'Read the roadmap and continue implementation', metadata: { id: 'p1', setId: 'set1', status: 'active', created: '2026-01-12T00:00:00Z' } },
+              { id: 'p2', content: 'Add tests for new parser functionality', metadata: { id: 'p2', setId: 'set1', status: 'queue', created: '2026-01-12T00:01:00Z' } },
+              { id: 'p3', content: 'Initial setup and configuration', metadata: { id: 'p3', setId: 'set2', status: 'done', created: '2026-01-12T00:00:00Z' } },
+              { id: 'p4', content: 'Add templates support', metadata: { id: 'p4', setId: 'set3', status: 'queue', created: '2026-01-12T00:02:00Z' } },
+              { id: 'p5', content: 'Implement drag-and-drop between sets', metadata: { id: 'p5', setId: 'set3', status: 'queue', created: '2026-01-12T00:03:00Z' } }
+            ],
+            trailingNewline: true
+          }
+        },
+        'all-statuses': {
+          name: 'All Status Types',
+          document: {
+            fileMetadata: { version: '2.0', groups: {} },
+            sets: [
+              { id: 'set1', name: 'Status Demo', active: true, collapsed: false, created: '2026-01-12T00:00:00Z' }
+            ],
+            sessions: [],
+            prompts: [
+              { id: 'p1', content: 'This prompt is in the queue', metadata: { id: 'p1', setId: 'set1', status: 'queue', created: '2026-01-12T00:00:00Z' } },
+              { id: 'p2', content: 'This prompt is currently active', metadata: { id: 'p2', setId: 'set1', status: 'active', created: '2026-01-12T00:01:00Z' } },
+              { id: 'p3', content: 'This prompt is done', metadata: { id: 'p3', setId: 'set1', status: 'done', created: '2026-01-12T00:02:00Z' } },
+              { id: 'p4', content: 'This prompt is trashed', metadata: { id: 'p4', setId: 'set1', status: 'trash', created: '2026-01-12T00:03:00Z' } }
+            ],
+            trailingNewline: true
+          }
+        },
+        'empty': {
+          name: 'Empty Document',
+          document: {
+            fileMetadata: { version: '2.0', groups: {} },
+            sets: [],
+            sessions: [],
+            prompts: [],
+            trailingNewline: true
+          }
+        },
+        'long-content': {
+          name: 'Long Content',
+          document: {
+            fileMetadata: { version: '2.0', groups: {} },
+            sets: [
+              { id: 'set1', name: 'Long Content Test', active: true, collapsed: false, created: '2026-01-12T00:00:00Z' }
+            ],
+            sessions: [],
+            prompts: [
+              { id: 'p1', content: 'This is a prompt with a lot of content to test how the UI handles longer text.\n\nIt has multiple paragraphs.\n\n## A Heading\n\nAnd some bullet points:\n- First item\n- Second item\n- Third item\n\n```javascript\n// And some code\nfunction hello() {\n  console.log("Hello world");\n}\n```\n\nMore text at the end.', metadata: { id: 'p1', setId: 'set1', status: 'active', created: '2026-01-12T00:00:00Z' } },
+              { id: 'p2', content: 'Short follow-up', metadata: { id: 'p2', setId: 'set1', status: 'queue', created: '2026-01-12T00:01:00Z' } }
+            ],
+            trailingNewline: true
+          }
+        }
+      };
+
+      // ============================================================
+      // Test Harness Functions
+      // ============================================================
+      function sendDocumentToWebview(document) {
+        const message = { type: 'documentLoaded', document };
+        console.log('[Mock VS Code] Sending document:', message);
+        messageLog.push({ direction: 'to-webview', message, timestamp: Date.now() });
+        window.postMessage(message, '*');
+      }
+
+      function loadSelectedFixture() {
+        const selector = document.getElementById('fixture-selector');
+        const fixtureKey = selector ? selector.value : 'v2-full';
+        const fixture = TEST_FIXTURES[fixtureKey];
+        if (fixture) {
+          sendDocumentToWebview(fixture.document);
+          updateStatus(`Loaded: ${fixture.name}`);
+        }
+      }
+
+      function updateStatus(text) {
+        const status = document.getElementById('status');
+        if (status) {
+          status.textContent = text;
+          setTimeout(() => { status.textContent = 'Ready'; }, 2000);
+        }
+      }
+
+      function initTestControls() {
+        // Populate fixture selector
+        const selector = document.getElementById('fixture-selector');
+        for (const [key, fixture] of Object.entries(TEST_FIXTURES)) {
+          const option = document.createElement('option');
+          option.value = key;
+          option.textContent = fixture.name;
+          selector.appendChild(option);
+        }
+
+        // Check URL params for initial fixture
+        const params = new URLSearchParams(window.location.search);
+        const initialFixture = params.get('fixture');
+        if (initialFixture && TEST_FIXTURES[initialFixture]) {
+          selector.value = initialFixture;
+        }
+
+        // Fixture change handler
+        selector.addEventListener('change', loadSelectedFixture);
+
+        // Reload button
+        document.getElementById('reload-btn').addEventListener('click', loadSelectedFixture);
+      }
+
+      // Initialize controls when DOM is ready
+      document.addEventListener('DOMContentLoaded', initTestControls);
+    </script>
+  </head>
+  <body>
+    <!-- Test Controls Bar -->
+    <div id="test-controls">
+      <label>Fixture:</label>
+      <select id="fixture-selector"></select>
+      <button id="reload-btn">Reload</button>
+      <div class="spacer"></div>
+      <span class="status" id="status">Initializing...</span>
+    </div>
+
+    <!-- Webview Root -->
+    <div id="root"></div>
+
+    <!-- Load the webview app -->
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

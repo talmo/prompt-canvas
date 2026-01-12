@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite build --watch",
-    "build": "vite build"
+    "build": "vite build",
+    "test:harness": "vite --open /test-harness.html"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.0",
