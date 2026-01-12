@@ -1,10 +1,42 @@
 import { nanoid } from 'nanoid';
-import type { PromptDocument, Prompt, FileMetadata, PromptMetadata, PromptSet } from './types';
+import type { PromptDocument, Prompt, FileMetadata, PromptMetadata, PromptSet, Session } from './types';
 
 const FILE_META_REGEX = /^<!--\s*prompt-canvas:\s*(\{.*?\})\s*-->/;
 const SET_META_REGEX = /^<!--\s*set:\s*(\{.*?\})\s*-->\n?/;
 const PROMPT_META_REGEX = /^<!--\s*prompt:\s*(\{.*?\})\s*-->\n?/;
 const SEPARATOR_REGEX = /\n---+\n/;
+
+// v2.0 format regexes
+const METADATA_REGEX = /^<!--\s*(\{.*?\})\s*-->$/;
+const H1_REGEX = /^#\s+(.*)$/;
+const H2_REGEX = /^##\s+(.*)$/;
+const H3_REGEX = /^###\s+(.*)$/;
+const EMPTY_H1_REGEX = /^#\s*$/;
+const EMPTY_H2_REGEX = /^##\s*$/;
+const EMPTY_H3_REGEX = /^###\s*$/;
+
+/**
+ * Auto-promote H1/H2/H3 in content to H4/H5/H6
+ * This prevents content headings from being confused with structural headings.
+ * Order matters: process ### first to avoid double-promoting
+ */
+function promoteContentHeadings(content: string): string {
+  return content
+    .replace(/^### /gm, '###### ')  // ### → ######
+    .replace(/^## /gm, '##### ')    // ## → #####
+    .replace(/^# /gm, '#### ');     // # → ####
+}
+
+/**
+ * Demote H4/H5/H6 in content back to H1/H2/H3 for display
+ * This restores the original heading levels when reading.
+ */
+function demoteContentHeadings(content: string): string {
+  return content
+    .replace(/^###### /gm, '### ')
+    .replace(/^##### /gm, '## ')
+    .replace(/^#### /gm, '# ');
+}
 
 // Detect investigation folder patterns in prompt content
 const FOLDER_LINK_REGEX = /scratch\/\d{4}-\d{2}-\d{2}-[\w-]+\/?/;
@@ -13,6 +45,7 @@ export function parse(text: string): PromptDocument {
   let fileMetadata: FileMetadata = { version: '1.0', groups: {} };
   let content = text;
   const sets: PromptSet[] = [];
+  const sessions: Session[] = [];
   const prompts: Prompt[] = [];
 
   // Extract file-level metadata
@@ -29,17 +62,25 @@ export function parse(text: string): PromptDocument {
   // Handle empty content
   if (!content.trim()) {
     return {
-      fileMetadata: { ...fileMetadata, version: '1.1' },
+      fileMetadata: { ...fileMetadata, version: '2.0' },
       sets: [],
+      sessions: [],
       prompts: [],
       trailingNewline: text.endsWith('\n'),
     };
   }
 
-  // Check if this is v1.1 format (has set metadata)
+  // Detect format version:
+  // v2.0: Uses markdown headings (# for set, ## for session, ### for prompt)
+  // v1.1: Uses <!-- set: --> and <!-- prompt: --> comments
+  // v1.0: Uses <!-- prompt: --> comments only (or no metadata)
+  const isV20Format = detectV20Format(content);
   const isV11Format = content.includes('<!-- set:');
 
-  if (isV11Format) {
+  if (isV20Format) {
+    // Parse v2.0 format with heading structure
+    parseV20Format(content, sets, sessions, prompts);
+  } else if (isV11Format) {
     // Parse v1.1 format with explicit sets
     parseV11Format(content, sets, prompts);
   } else {
@@ -48,11 +89,222 @@ export function parse(text: string): PromptDocument {
   }
 
   return {
-    fileMetadata: { ...fileMetadata, version: '1.1' },
+    fileMetadata: { ...fileMetadata, version: '2.0' },
     sets,
+    sessions,
     prompts,
     trailingNewline: text.endsWith('\n'),
   };
+}
+
+/**
+ * Detect if content is v2.0 format (heading-based structure)
+ * v2.0 is detected by having H1/H2/H3 headings followed by JSON metadata comments
+ */
+function detectV20Format(content: string): boolean {
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length - 1; i++) {
+    const line = lines[i];
+    const nextLine = lines[i + 1];
+    // Check for heading followed by metadata comment
+    if ((line.match(H1_REGEX) || line.match(H2_REGEX) || line.match(H3_REGEX) ||
+         line.match(EMPTY_H1_REGEX) || line.match(EMPTY_H2_REGEX) || line.match(EMPTY_H3_REGEX)) &&
+        nextLine.match(METADATA_REGEX)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Parse v2.0 format with heading-based structure:
+ * - H1 (#) = PromptSet
+ * - H2 (##) = Session (optional grouping)
+ * - H3 (###) = Prompt
+ */
+function parseV20Format(
+  content: string,
+  sets: PromptSet[],
+  sessions: Session[],
+  prompts: Prompt[]
+): void {
+  const lines = content.split('\n');
+  const now = new Date().toISOString();
+
+  let currentSetId: string | null = null;
+  let currentSessionId: string | null = null;
+  let currentPrompt: Partial<Prompt> | null = null;
+  let currentPromptContent: string[] = [];
+  let lineIndex = 0;
+
+  function saveCurrentPrompt(): void {
+    if (currentPrompt && currentPrompt.id) {
+      // Trim trailing empty lines
+      while (currentPromptContent.length > 0 && currentPromptContent[currentPromptContent.length - 1].trim() === '') {
+        currentPromptContent.pop();
+      }
+      // Trim leading empty lines
+      while (currentPromptContent.length > 0 && currentPromptContent[0].trim() === '') {
+        currentPromptContent.shift();
+      }
+
+      // Demote H4/H5/H6 back to H1/H2/H3 for internal representation
+      const rawContent = currentPromptContent.join('\n');
+      currentPrompt.content = demoteContentHeadings(rawContent);
+
+      prompts.push(currentPrompt as Prompt);
+      currentPrompt = null;
+      currentPromptContent = [];
+    }
+  }
+
+  function ensureSet(): string {
+    if (!currentSetId) {
+      const setId = nanoid();
+      sets.push({
+        id: setId,
+        active: true,
+        collapsed: false,
+        created: now,
+      });
+      currentSetId = setId;
+    }
+    return currentSetId;
+  }
+
+  for (; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    const trimmed = line.trim();
+
+    // Check for H1 (Set) - must check before H2 and H3
+    const h1Match = line.match(H1_REGEX) || line.match(EMPTY_H1_REGEX);
+    if (h1Match) {
+      saveCurrentPrompt();
+
+      const setId = nanoid();
+      const name = h1Match[1]?.trim() || undefined;
+
+      // Check next line for metadata
+      let metadata: Record<string, unknown> = {};
+      if (lineIndex + 1 < lines.length) {
+        const metaMatch = lines[lineIndex + 1].match(METADATA_REGEX);
+        if (metaMatch) {
+          try {
+            metadata = JSON.parse(metaMatch[1]);
+            lineIndex++; // Skip metadata line
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+
+      sets.push({
+        id: (metadata.id as string) || setId,
+        name,
+        active: (metadata.active as boolean) ?? sets.length === 0,
+        collapsed: (metadata.collapsed as boolean) ?? false,
+        created: (metadata.created as string) || now,
+        folderLink: metadata.folderLink as string | undefined,
+      });
+
+      currentSetId = (metadata.id as string) || setId;
+      currentSessionId = null;
+      continue;
+    }
+
+    // Check for H2 (Session)
+    const h2Match = line.match(H2_REGEX) || line.match(EMPTY_H2_REGEX);
+    if (h2Match) {
+      saveCurrentPrompt();
+
+      const sessionId = nanoid();
+      const name = h2Match[1]?.trim() || undefined;
+      const setId = ensureSet();
+
+      // Check next line for metadata
+      let metadata: Record<string, unknown> = {};
+      if (lineIndex + 1 < lines.length) {
+        const metaMatch = lines[lineIndex + 1].match(METADATA_REGEX);
+        if (metaMatch) {
+          try {
+            metadata = JSON.parse(metaMatch[1]);
+            lineIndex++; // Skip metadata line
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+
+      sessions.push({
+        id: (metadata.id as string) || sessionId,
+        name,
+        setId,
+        collapsed: metadata.collapsed as boolean | undefined,
+      });
+
+      currentSessionId = (metadata.id as string) || sessionId;
+      continue;
+    }
+
+    // Check for H3 (Prompt)
+    const h3Match = line.match(H3_REGEX) || line.match(EMPTY_H3_REGEX);
+    if (h3Match) {
+      saveCurrentPrompt();
+
+      const promptId = nanoid();
+      const name = h3Match[1]?.trim() || undefined;
+      const setId = ensureSet();
+
+      // Check next line for metadata
+      let metadata: Record<string, unknown> = {};
+      if (lineIndex + 1 < lines.length) {
+        const metaMatch = lines[lineIndex + 1].match(METADATA_REGEX);
+        if (metaMatch) {
+          try {
+            metadata = JSON.parse(metaMatch[1]);
+            lineIndex++; // Skip metadata line
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+
+      currentPrompt = {
+        id: (metadata.id as string) || promptId,
+        content: '',
+        metadata: {
+          id: (metadata.id as string) || promptId,
+          name,
+          setId,
+          sessionId: currentSessionId || undefined,
+          status: (metadata.status as PromptMetadata['status']) || 'queue',
+          created: (metadata.created as string) || now,
+          updated: metadata.updated as string | undefined,
+          folderLink: metadata.folderLink as string | undefined,
+        },
+      };
+      currentPromptContent = [];
+      continue;
+    }
+
+    // Skip cosmetic separators between prompts
+    if (trimmed.match(/^-{3,}$/)) {
+      continue;
+    }
+
+    // Accumulate content if in a prompt
+    if (currentPrompt) {
+      currentPromptContent.push(line);
+    }
+  }
+
+  // Save final prompt
+  saveCurrentPrompt();
+
+  // Ensure at least one set is active
+  if (sets.length > 0 && !sets.some(s => s.active)) {
+    sets[0].active = true;
+  }
 }
 
 function parseV11Format(content: string, sets: PromptSet[], prompts: Prompt[]): void {
@@ -258,24 +510,25 @@ function parseV10Format(
 export function serialize(doc: PromptDocument): string {
   const parts: string[] = [];
 
-  // File metadata (upgrade to v1.1)
-  const fileMeta: FileMetadata = {
-    ...doc.fileMetadata,
-    version: '1.1',
-  };
-  parts.push(`<!-- prompt-canvas: ${JSON.stringify(fileMeta)} -->\n`);
+  // File metadata (always v2.0)
+  parts.push(`<!-- prompt-canvas: {"version":"2.0"} -->\n`);
 
-  // Group prompts by setId
-  const promptsBySet = new Map<string, Prompt[]>();
+  // Group prompts by setId, then by sessionId
+  const promptsBySetAndSession = new Map<string, Map<string | null, Prompt[]>>();
   const orphanPrompts: Prompt[] = [];
 
   for (const prompt of doc.prompts) {
     const setId = prompt.metadata.setId;
     if (setId) {
-      if (!promptsBySet.has(setId)) {
-        promptsBySet.set(setId, []);
+      if (!promptsBySetAndSession.has(setId)) {
+        promptsBySetAndSession.set(setId, new Map());
       }
-      promptsBySet.get(setId)!.push(prompt);
+      const setMap = promptsBySetAndSession.get(setId)!;
+      const sessionKey = prompt.metadata.sessionId || null;
+      if (!setMap.has(sessionKey)) {
+        setMap.set(sessionKey, []);
+      }
+      setMap.get(sessionKey)!.push(prompt);
     } else {
       orphanPrompts.push(prompt);
     }
@@ -294,49 +547,103 @@ export function serialize(doc: PromptDocument): string {
     setsToWrite.push(defaultSet);
     for (const prompt of orphanPrompts) {
       prompt.metadata.setId = defaultSetId;
-      if (!promptsBySet.has(defaultSetId)) {
-        promptsBySet.set(defaultSetId, []);
+      if (!promptsBySetAndSession.has(defaultSetId)) {
+        promptsBySetAndSession.set(defaultSetId, new Map());
       }
-      promptsBySet.get(defaultSetId)!.push(prompt);
+      const setMap = promptsBySetAndSession.get(defaultSetId)!;
+      if (!setMap.has(null)) {
+        setMap.set(null, []);
+      }
+      setMap.get(null)!.push(prompt);
     }
   }
 
-  // Serialize each set with its prompts
+  // Sessions indexed by ID
+  const sessions = doc.sessions || [];
+  const sessionsById = new Map(sessions.map(s => [s.id, s]));
+
+  // Serialize each set with its prompts using v2.0 heading format
   const setOutputs: string[] = [];
 
   for (const set of setsToWrite) {
-    const setPrompts = promptsBySet.get(set.id) || [];
-    if (setPrompts.length === 0) continue; // Skip empty sets
+    const setMap = promptsBySetAndSession.get(set.id);
+    if (!setMap || setMap.size === 0) continue; // Skip empty sets
 
     const setOutput: string[] = [];
 
-    // Set metadata comment
-    const setMeta = {
+    // Set heading (H1)
+    const setName = set.name || '';
+    setOutput.push(`# ${setName}`);
+
+    // Set metadata
+    const setMeta: Record<string, unknown> = {
       id: set.id,
-      ...(set.name && { name: set.name }),
       active: set.active,
-      ...(set.collapsed && { collapsed: set.collapsed }),
-      ...(set.folderLink && { folderLink: set.folderLink }),
     };
-    setOutput.push(`<!-- set: ${JSON.stringify(setMeta)} -->`);
+    if (set.collapsed) setMeta.collapsed = true;
+    if (set.folderLink) setMeta.folderLink = set.folderLink;
+    if (set.created) setMeta.created = set.created;
+    setOutput.push(`<!-- ${JSON.stringify(setMeta)} -->\n`);
 
-    // Prompts within set
-    const promptOutputs: string[] = [];
-    for (const prompt of setPrompts) {
-      // Clean up metadata for serialization (remove deprecated fields)
-      const cleanMeta = { ...prompt.metadata };
-      delete cleanMeta.group; // Remove deprecated v1.0 field
-
-      const metaComment = `<!-- prompt: ${JSON.stringify(cleanMeta)} -->`;
-      promptOutputs.push(`${metaComment}\n${prompt.content}`);
+    // Get all session IDs for this set (in order), plus null for no-session prompts
+    const sessionIds: (string | null)[] = [];
+    if (setMap.has(null)) sessionIds.push(null);
+    for (const session of sessions) {
+      if (session.setId === set.id && setMap.has(session.id)) {
+        sessionIds.push(session.id);
+      }
     }
 
-    setOutput.push(promptOutputs.join('\n\n---\n\n'));
+    for (const sessionId of sessionIds) {
+      const sessionPrompts = setMap.get(sessionId) || [];
+      if (sessionPrompts.length === 0) continue;
+
+      if (sessionId) {
+        const session = sessionsById.get(sessionId);
+        if (session) {
+          const sessionName = session.name || '';
+          setOutput.push(`## ${sessionName}`);
+
+          // Session metadata
+          const sessionMeta: Record<string, unknown> = { id: session.id };
+          if (session.collapsed) sessionMeta.collapsed = true;
+          setOutput.push(`<!-- ${JSON.stringify(sessionMeta)} -->\n`);
+        }
+      }
+
+      // Prompts within session
+      const promptParts: string[] = [];
+      for (const prompt of sessionPrompts) {
+        const promptName = prompt.metadata.name || '';
+        let promptStr = `### ${promptName}`;
+
+        // Prompt metadata
+        const promptMeta: Record<string, unknown> = {
+          id: prompt.id,
+          status: prompt.metadata.status,
+        };
+        if (prompt.metadata.created) promptMeta.created = prompt.metadata.created;
+        if (prompt.metadata.updated) promptMeta.updated = prompt.metadata.updated;
+        if (prompt.metadata.folderLink) promptMeta.folderLink = prompt.metadata.folderLink;
+        promptStr += `\n<!-- ${JSON.stringify(promptMeta)} -->`;
+
+        if (prompt.content) {
+          // Auto-promote H1/H2/H3 in content to H4/H5/H6
+          const promotedContent = promoteContentHeadings(prompt.content);
+          promptStr += `\n${promotedContent}`;
+        }
+
+        promptParts.push(promptStr);
+      }
+
+      setOutput.push(promptParts.join('\n\n'));
+    }
+
     setOutputs.push(setOutput.join('\n'));
   }
 
   // Join sets with blank lines
-  parts.push(setOutputs.join('\n\n\n'));
+  parts.push(setOutputs.join('\n\n'));
 
   let result = parts.join('\n');
 

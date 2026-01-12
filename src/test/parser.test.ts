@@ -16,10 +16,11 @@ describe('parser', () => {
       const content = loadFixture('basic.queue.md');
       const doc = parse(content);
 
-      // Parser upgrades to v1.1 and creates sets
-      expect(doc.fileMetadata.version).toBe('1.1');
+      // Parser upgrades to v2.0 and creates sets
+      expect(doc.fileMetadata.version).toBe('2.0');
       expect(doc.sets).toBeDefined();
       expect(doc.sets.length).toBeGreaterThan(0);
+      expect(doc.sessions).toBeDefined();
       expect(doc.prompts).toHaveLength(3);
 
       expect(doc.prompts[0].id).toBe('prompt1');
@@ -61,7 +62,7 @@ describe('parser', () => {
       const content = loadFixture('with-sets.queue.md');
       const doc = parse(content);
 
-      expect(doc.fileMetadata.version).toBe('1.1');
+      expect(doc.fileMetadata.version).toBe('2.0');
       expect(doc.sets).toHaveLength(3);
       expect(doc.prompts).toHaveLength(4);
 
@@ -90,8 +91,9 @@ describe('parser', () => {
       const content = loadFixture('empty.queue.md');
       const doc = parse(content);
 
-      expect(doc.fileMetadata.version).toBe('1.1');
+      expect(doc.fileMetadata.version).toBe('2.0');
       expect(doc.sets).toHaveLength(0);
+      expect(doc.sessions).toHaveLength(0);
       expect(doc.prompts).toHaveLength(0);
     });
 
@@ -137,8 +139,9 @@ describe('parser', () => {
     it('handles completely empty string', () => {
       const doc = parse('');
 
-      expect(doc.fileMetadata.version).toBe('1.1');
+      expect(doc.fileMetadata.version).toBe('2.0');
       expect(doc.sets).toHaveLength(0);
+      expect(doc.sessions).toHaveLength(0);
       expect(doc.prompts).toHaveLength(0);
     });
 
@@ -158,12 +161,13 @@ describe('parser', () => {
   });
 
   describe('serialize', () => {
-    it('serializes document back to markdown', () => {
+    it('serializes document back to markdown with v2.0 headings', () => {
       const doc: PromptDocument = {
-        fileMetadata: { version: '1.1', groups: {} },
+        fileMetadata: { version: '2.0', groups: {} },
         sets: [
           { id: 'set1', active: true, collapsed: false, created: '2024-01-01T00:00:00Z' },
         ],
+        sessions: [],
         prompts: [
           {
             id: 'test1',
@@ -182,18 +186,18 @@ describe('parser', () => {
       const result = serialize(doc);
 
       expect(result).toContain('<!-- prompt-canvas:');
-      expect(result).toContain('<!-- set:');
-      expect(result).toContain('<!-- prompt:');
+      expect(result).toContain('# '); // H1 heading for set
+      expect(result).toContain('### '); // H3 heading for prompt
       expect(result).toContain('First prompt');
       expect(result).toContain('Second prompt');
-      expect(result).toContain('---');
       expect(result.endsWith('\n')).toBe(true);
     });
 
     it('serializes empty document', () => {
       const doc: PromptDocument = {
-        fileMetadata: { version: '1.1', groups: {} },
+        fileMetadata: { version: '2.0', groups: {} },
         sets: [],
+        sessions: [],
         prompts: [],
         trailingNewline: true,
       };
@@ -201,18 +205,18 @@ describe('parser', () => {
       const result = serialize(doc);
 
       expect(result).toContain('<!-- prompt-canvas:');
-      expect(result).not.toContain('---');
     });
 
-    it('serializes sets metadata', () => {
+    it('serializes sets with name in heading', () => {
       const doc: PromptDocument = {
         fileMetadata: {
-          version: '1.1',
+          version: '2.0',
           groups: {},
         },
         sets: [
           { id: 'set1', name: 'Test Set', active: true, collapsed: false, created: '2024-01-01T00:00:00Z' },
         ],
+        sessions: [],
         prompts: [
           {
             id: 'test1',
@@ -225,9 +229,35 @@ describe('parser', () => {
 
       const result = serialize(doc);
 
+      expect(result).toContain('# Test Set'); // H1 with set name
       expect(result).toContain('"set1"');
-      expect(result).toContain('"Test Set"');
       expect(result).toContain('"active":true');
+    });
+
+    it('serializes sessions as H2 headings', () => {
+      const doc: PromptDocument = {
+        fileMetadata: { version: '2.0', groups: {} },
+        sets: [
+          { id: 'set1', name: 'My Set', active: true, collapsed: false, created: '2024-01-01T00:00:00Z' },
+        ],
+        sessions: [
+          { id: 'sess1', name: 'My Session', setId: 'set1' },
+        ],
+        prompts: [
+          {
+            id: 'test1',
+            content: 'Test prompt',
+            metadata: { id: 'test1', setId: 'set1', sessionId: 'sess1', status: 'queue', created: '2024-01-01T00:00:00Z' },
+          },
+        ],
+        trailingNewline: true,
+      };
+
+      const result = serialize(doc);
+
+      expect(result).toContain('# My Set');
+      expect(result).toContain('## My Session');
+      expect(result).toContain('### ');
     });
   });
 
@@ -246,13 +276,14 @@ describe('parser', () => {
       });
     });
 
-    it('grouped file round-trips correctly', () => {
+    it('grouped file migrates to sets correctly', () => {
       const original = loadFixture('with-groups.queue.md');
       const doc = parse(original);
       const serialized = serialize(doc);
       const reparsed = parse(serialized);
 
-      expect(reparsed.fileMetadata.groups).toEqual(doc.fileMetadata.groups);
+      // Groups are migrated to sets in v2.0
+      expect(reparsed.sets.length).toBeGreaterThan(0);
       expect(reparsed.prompts).toHaveLength(doc.prompts.length);
     });
 
@@ -264,7 +295,73 @@ describe('parser', () => {
 
       expect(reparsed.prompts).toHaveLength(0);
       expect(reparsed.sets).toHaveLength(0);
-      expect(reparsed.fileMetadata.version).toBe('1.1');
+      expect(reparsed.fileMetadata.version).toBe('2.0');
+    });
+
+    it('v2.0 file with sessions round-trips correctly', () => {
+      const doc: PromptDocument = {
+        fileMetadata: { version: '2.0', groups: {} },
+        sets: [
+          { id: 'set1', name: 'Test Set', active: true, collapsed: false, created: '2024-01-01T00:00:00Z' },
+        ],
+        sessions: [
+          { id: 'sess1', name: 'Session One', setId: 'set1' },
+        ],
+        prompts: [
+          {
+            id: 'p1',
+            content: 'First prompt',
+            metadata: { id: 'p1', setId: 'set1', sessionId: 'sess1', status: 'queue', created: '2024-01-01T00:00:00Z' },
+          },
+          {
+            id: 'p2',
+            content: 'Second prompt',
+            metadata: { id: 'p2', setId: 'set1', sessionId: 'sess1', status: 'active', created: '2024-01-02T00:00:00Z' },
+          },
+        ],
+        trailingNewline: true,
+      };
+
+      const serialized = serialize(doc);
+      const reparsed = parse(serialized);
+
+      expect(reparsed.sets).toHaveLength(1);
+      expect(reparsed.sets[0].name).toBe('Test Set');
+      expect(reparsed.sessions).toHaveLength(1);
+      expect(reparsed.sessions[0].name).toBe('Session One');
+      expect(reparsed.prompts).toHaveLength(2);
+      expect(reparsed.prompts[0].metadata.sessionId).toBe('sess1');
+    });
+
+    it('content headings are promoted and demoted correctly', () => {
+      const doc: PromptDocument = {
+        fileMetadata: { version: '2.0', groups: {} },
+        sets: [
+          { id: 'set1', active: true, collapsed: false, created: '2024-01-01T00:00:00Z' },
+        ],
+        sessions: [],
+        prompts: [
+          {
+            id: 'p1',
+            content: '# Step 1\nDo something\n\n## Sub-step\nMore details\n\n### Notes\nFinal notes',
+            metadata: { id: 'p1', setId: 'set1', status: 'queue', created: '2024-01-01T00:00:00Z' },
+          },
+        ],
+        trailingNewline: true,
+      };
+
+      const serialized = serialize(doc);
+
+      // In file, H1/H2/H3 in content should be promoted to H4/H5/H6
+      expect(serialized).toContain('#### Step 1');
+      expect(serialized).toContain('##### Sub-step');
+      expect(serialized).toContain('###### Notes');
+
+      // After parsing, they should be demoted back
+      const reparsed = parse(serialized);
+      expect(reparsed.prompts[0].content).toContain('# Step 1');
+      expect(reparsed.prompts[0].content).toContain('## Sub-step');
+      expect(reparsed.prompts[0].content).toContain('### Notes');
     });
   });
 });

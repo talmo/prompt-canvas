@@ -16,6 +16,14 @@ export interface PromptSet {
   folderLink?: string; // Links to investigation folder (e.g., scratch/YYYY-MM-DD-name/)
 }
 
+// v2.0 format: Session as H2-level grouping within a set
+export interface Session {
+  id: string;
+  name?: string; // H2 heading text (optional)
+  setId: string; // Parent set
+  collapsed?: boolean; // Optional collapse state
+}
+
 export interface FileMetadata {
   version: string;
   groups: Record<string, GroupMetadata>; // v1.0 legacy, deprecated
@@ -23,7 +31,9 @@ export interface FileMetadata {
 
 export interface PromptMetadata {
   id: string;
-  setId?: string; // v1.1: Required - every prompt belongs to a set
+  name?: string; // v2.0: H3 heading text (optional)
+  setId?: string; // v1.1+: Required - every prompt belongs to a set
+  sessionId?: string; // v2.0: Optional - prompt may belong to a session (H2)
   group?: string; // v1.0 legacy, deprecated
   status: PromptStatus;
   created: string;
@@ -39,7 +49,8 @@ export interface Prompt {
 
 export interface PromptDocument {
   fileMetadata: FileMetadata;
-  sets: PromptSet[]; // v1.1: Ordered list of sets
+  sets: PromptSet[]; // v1.1+: Ordered list of sets
+  sessions: Session[]; // v2.0: Ordered list of sessions (H2 groupings)
   prompts: Prompt[]; // Prompts reference their set via metadata.setId
   trailingNewline: boolean;
 }

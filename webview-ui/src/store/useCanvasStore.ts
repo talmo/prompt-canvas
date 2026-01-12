@@ -54,10 +54,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   isExternalUpdate: false,
 
   setDocument: (doc, isExternal = false) => {
-    // Ensure document has sets array (backwards compatibility)
+    // Ensure document has sets and sessions arrays (backwards compatibility)
     const normalizedDoc = {
       ...doc,
       sets: doc.sets || [],
+      sessions: doc.sessions || [],
     };
     set({ document: normalizedDoc, isExternalUpdate: isExternal });
   },
