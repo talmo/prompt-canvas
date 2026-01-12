@@ -157,4 +157,87 @@ describe('Prompt Canvas Extension', () => {
       await browser.switchToParentFrame();
     }
   });
+
+  it('should display prompt sets with v1.1 format', async () => {
+    // Open a file with sets
+    const testFile = path.join(process.cwd(), 'src', 'test', 'fixtures', 'with-sets.queue.md');
+
+    await (browser as any).executeWorkbench(async (vscode: any, filePath: string) => {
+      const uri = vscode.Uri.file(filePath);
+      await vscode.commands.executeCommand('vscode.open', uri);
+    }, testFile);
+
+    await browser.pause(2000);
+
+    // Get webview frames
+    const webviewFrame = await browser.$('iframe.webview.ready');
+    if (await webviewFrame.isExisting()) {
+      await browser.switchToFrame(webviewFrame);
+
+      const innerFrame = await browser.$('iframe');
+      if (await innerFrame.isExisting()) {
+        await browser.switchToFrame(innerFrame);
+      }
+
+      // Find prompt set container
+      const promptSet = await browser.$('[data-testid="prompt-set"]');
+      await promptSet.waitForExist({ timeout: 5000 });
+
+      expect(await promptSet.isExisting()).toBe(true);
+
+      // Check for active set indicator
+      const activeSet = await browser.$('[data-testid="prompt-set"][data-active="true"]');
+      expect(await activeSet.isExisting()).toBe(true);
+
+      // Check that set header exists
+      const setHeader = await browser.$('[data-testid="set-header"]');
+      expect(await setHeader.isExisting()).toBe(true);
+
+      // Switch back to main context
+      await browser.switchToParentFrame();
+      await browser.switchToParentFrame();
+    }
+  });
+
+  it('should toggle set collapse when clicking set header', async () => {
+    // Open a file with sets
+    const testFile = path.join(process.cwd(), 'src', 'test', 'fixtures', 'with-sets.queue.md');
+
+    await (browser as any).executeWorkbench(async (vscode: any, filePath: string) => {
+      const uri = vscode.Uri.file(filePath);
+      await vscode.commands.executeCommand('vscode.open', uri);
+    }, testFile);
+
+    await browser.pause(2000);
+
+    // Get webview frames
+    const webviewFrame = await browser.$('iframe.webview.ready');
+    if (await webviewFrame.isExisting()) {
+      await browser.switchToFrame(webviewFrame);
+
+      const innerFrame = await browser.$('iframe');
+      if (await innerFrame.isExisting()) {
+        await browser.switchToFrame(innerFrame);
+      }
+
+      // Find set header
+      const setHeader = await browser.$('[data-testid="set-header"]');
+      if (await setHeader.isExisting()) {
+        const initialCollapsed = await setHeader.getAttribute('data-collapsed');
+
+        // Click to toggle
+        await setHeader.click();
+        await browser.pause(500);
+
+        const newCollapsed = await setHeader.getAttribute('data-collapsed');
+
+        // Verify state changed
+        expect(newCollapsed).not.toBe(initialCollapsed);
+      }
+
+      // Switch back to main context
+      await browser.switchToParentFrame();
+      await browser.switchToParentFrame();
+    }
+  });
 });

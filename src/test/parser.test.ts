@@ -16,12 +16,16 @@ describe('parser', () => {
       const content = loadFixture('basic.queue.md');
       const doc = parse(content);
 
-      expect(doc.fileMetadata.version).toBe('1.0');
+      // Parser upgrades to v1.1 and creates sets
+      expect(doc.fileMetadata.version).toBe('1.1');
+      expect(doc.sets).toBeDefined();
+      expect(doc.sets.length).toBeGreaterThan(0);
       expect(doc.prompts).toHaveLength(3);
 
       expect(doc.prompts[0].id).toBe('prompt1');
       expect(doc.prompts[0].metadata.status).toBe('queue');
       expect(doc.prompts[0].content).toBe('This is a basic prompt.');
+      expect(doc.prompts[0].metadata.setId).toBeDefined();
 
       expect(doc.prompts[1].id).toBe('prompt2');
       expect(doc.prompts[1].metadata.status).toBe('active');
@@ -53,11 +57,41 @@ describe('parser', () => {
       expect(ungrouped).toHaveLength(1);
     });
 
+    it('parses v1.1 file with sets', () => {
+      const content = loadFixture('with-sets.queue.md');
+      const doc = parse(content);
+
+      expect(doc.fileMetadata.version).toBe('1.1');
+      expect(doc.sets).toHaveLength(3);
+      expect(doc.prompts).toHaveLength(4);
+
+      // Check sets
+      const activeSet = doc.sets.find(s => s.active);
+      expect(activeSet).toBeDefined();
+      expect(activeSet?.name).toBe('Active Investigation');
+      expect(activeSet?.id).toBe('set1');
+
+      const collapsedSet = doc.sets.find(s => s.collapsed);
+      expect(collapsedSet).toBeDefined();
+      expect(collapsedSet?.name).toBe('Completed Work');
+
+      // Check prompts have correct setIds
+      const set1Prompts = doc.prompts.filter(p => p.metadata.setId === 'set1');
+      expect(set1Prompts).toHaveLength(2);
+      expect(set1Prompts[0].metadata.status).toBe('active');
+      expect(set1Prompts[1].metadata.status).toBe('queue');
+
+      const set2Prompts = doc.prompts.filter(p => p.metadata.setId === 'set2');
+      expect(set2Prompts).toHaveLength(1);
+      expect(set2Prompts[0].metadata.status).toBe('done');
+    });
+
     it('parses empty file', () => {
       const content = loadFixture('empty.queue.md');
       const doc = parse(content);
 
-      expect(doc.fileMetadata.version).toBe('1.0');
+      expect(doc.fileMetadata.version).toBe('1.1');
+      expect(doc.sets).toHaveLength(0);
       expect(doc.prompts).toHaveLength(0);
     });
 
@@ -103,7 +137,8 @@ describe('parser', () => {
     it('handles completely empty string', () => {
       const doc = parse('');
 
-      expect(doc.fileMetadata.version).toBe('1.0');
+      expect(doc.fileMetadata.version).toBe('1.1');
+      expect(doc.sets).toHaveLength(0);
       expect(doc.prompts).toHaveLength(0);
     });
 
@@ -125,17 +160,20 @@ describe('parser', () => {
   describe('serialize', () => {
     it('serializes document back to markdown', () => {
       const doc: PromptDocument = {
-        fileMetadata: { version: '1.0', groups: {} },
+        fileMetadata: { version: '1.1', groups: {} },
+        sets: [
+          { id: 'set1', active: true, collapsed: false, created: '2024-01-01T00:00:00Z' },
+        ],
         prompts: [
           {
             id: 'test1',
             content: 'First prompt',
-            metadata: { id: 'test1', status: 'queue', created: '2024-01-01T00:00:00Z' },
+            metadata: { id: 'test1', setId: 'set1', status: 'queue', created: '2024-01-01T00:00:00Z' },
           },
           {
             id: 'test2',
             content: 'Second prompt',
-            metadata: { id: 'test2', status: 'active', created: '2024-01-02T00:00:00Z' },
+            metadata: { id: 'test2', setId: 'set1', status: 'active', created: '2024-01-02T00:00:00Z' },
           },
         ],
         trailingNewline: true,
@@ -144,6 +182,7 @@ describe('parser', () => {
       const result = serialize(doc);
 
       expect(result).toContain('<!-- prompt-canvas:');
+      expect(result).toContain('<!-- set:');
       expect(result).toContain('<!-- prompt:');
       expect(result).toContain('First prompt');
       expect(result).toContain('Second prompt');
@@ -153,7 +192,8 @@ describe('parser', () => {
 
     it('serializes empty document', () => {
       const doc: PromptDocument = {
-        fileMetadata: { version: '1.0', groups: {} },
+        fileMetadata: { version: '1.1', groups: {} },
+        sets: [],
         prompts: [],
         trailingNewline: true,
       };
@@ -164,23 +204,30 @@ describe('parser', () => {
       expect(result).not.toContain('---');
     });
 
-    it('serializes groups metadata', () => {
+    it('serializes sets metadata', () => {
       const doc: PromptDocument = {
         fileMetadata: {
-          version: '1.0',
-          groups: {
-            grp1: { name: 'Test Group', collapsed: true },
-          },
+          version: '1.1',
+          groups: {},
         },
-        prompts: [],
+        sets: [
+          { id: 'set1', name: 'Test Set', active: true, collapsed: false, created: '2024-01-01T00:00:00Z' },
+        ],
+        prompts: [
+          {
+            id: 'test1',
+            content: 'Test prompt',
+            metadata: { id: 'test1', setId: 'set1', status: 'queue', created: '2024-01-01T00:00:00Z' },
+          },
+        ],
         trailingNewline: true,
       };
 
       const result = serialize(doc);
 
-      expect(result).toContain('"grp1"');
-      expect(result).toContain('"Test Group"');
-      expect(result).toContain('"collapsed":true');
+      expect(result).toContain('"set1"');
+      expect(result).toContain('"Test Set"');
+      expect(result).toContain('"active":true');
     });
   });
 
@@ -216,7 +263,8 @@ describe('parser', () => {
       const reparsed = parse(serialized);
 
       expect(reparsed.prompts).toHaveLength(0);
-      expect(reparsed.fileMetadata.version).toBe('1.0');
+      expect(reparsed.sets).toHaveLength(0);
+      expect(reparsed.fileMetadata.version).toBe('1.1');
     });
   });
 });

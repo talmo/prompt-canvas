@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { PromptDocument, Prompt, PromptStatus, FileMetadata } from '../types';
+import type { PromptDocument, Prompt, PromptStatus, FileMetadata, PromptSet } from '../types';
 import { vscode } from '../vscode';
 
 function generateId(): string {
@@ -22,13 +22,26 @@ interface CanvasStore {
   setFocusedId: (id: string | null) => void;
   updatePromptContent: (id: string, content: string) => void;
   setPromptStatus: (id: string, status: PromptStatus) => void;
-  createPrompt: (afterId?: string, groupId?: string) => string;
+  createPrompt: (afterId?: string, setId?: string) => string;
   deletePrompt: (id: string) => void;
   reorderPrompts: (orderedIds: string[]) => void;
+
+  // Set operations (v1.1)
+  createSet: (afterSetId?: string) => string;
+  deleteSet: (setId: string) => void;
+  setActiveSet: (setId: string) => void;
+  toggleSetCollapse: (setId: string) => void;
+  renameSet: (setId: string, name: string) => void;
+  movePromptToSet: (promptId: string, setId: string) => void;
+  getActiveSetId: () => string | null;
+
+  // Legacy group operations (deprecated, kept for backwards compatibility)
   toggleGroupCollapse: (groupId: string) => void;
   setPromptGroup: (promptId: string, groupId: string | undefined) => void;
   createGroup: (name?: string) => string;
   renameGroup: (groupId: string, name: string) => void;
+
+  // History
   undo: () => void;
   redo: () => void;
 }
@@ -41,10 +54,12 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   isExternalUpdate: false,
 
   setDocument: (doc, isExternal = false) => {
-    set({ document: doc, isExternalUpdate: isExternal });
-    if (!isExternal) {
-      // Don't sync to extension if this is an external update
-    }
+    // Ensure document has sets array (backwards compatibility)
+    const normalizedDoc = {
+      ...doc,
+      sets: doc.sets || [],
+    };
+    set({ document: normalizedDoc, isExternalUpdate: isExternal });
   },
 
   setFocusedId: (id) => set({ focusedId: id }),
@@ -99,22 +114,46 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     vscode.postMessage({ type: 'contentChanged', document: newDoc });
   },
 
-  createPrompt: (afterId, groupId) => {
-    const { document } = get();
+  createPrompt: (afterId, setId) => {
+    const { document, getActiveSetId } = get();
     if (!document) return '';
 
     const prevDoc = document;
     const newId = generateId();
     const now = new Date().toISOString();
 
+    // Determine which set to add the prompt to
+    let targetSetId = setId;
+    if (!targetSetId && afterId) {
+      // Use the same set as the prompt we're inserting after
+      const afterPrompt = document.prompts.find((p) => p.id === afterId);
+      targetSetId = afterPrompt?.metadata.setId;
+    }
+    if (!targetSetId) {
+      // Use the active set
+      targetSetId = getActiveSetId() || undefined;
+    }
+
+    // If still no set, create a default one
+    let newSets = [...document.sets];
+    if (!targetSetId) {
+      targetSetId = generateId();
+      newSets.push({
+        id: targetSetId,
+        active: true,
+        collapsed: false,
+        created: now,
+      });
+    }
+
     const newPrompt: Prompt = {
       id: newId,
       content: '',
       metadata: {
         id: newId,
+        setId: targetSetId,
         status: 'queue',
         created: now,
-        group: groupId,
       },
     };
 
@@ -134,7 +173,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       newPrompts = [...document.prompts, newPrompt];
     }
 
-    const newDoc: PromptDocument = { ...document, prompts: newPrompts };
+    const newDoc: PromptDocument = { ...document, sets: newSets, prompts: newPrompts };
 
     set((state) => ({
       document: newDoc,
@@ -154,7 +193,16 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     const prevDoc = document;
     const newPrompts = document.prompts.filter((p) => p.id !== id);
 
-    const newDoc: PromptDocument = { ...document, prompts: newPrompts };
+    // Check if any sets are now empty and remove them
+    const usedSetIds = new Set(newPrompts.map((p) => p.metadata.setId).filter(Boolean));
+    const newSets = document.sets.filter((s) => usedSetIds.has(s.id));
+
+    // Ensure at least one set remains active
+    if (newSets.length > 0 && !newSets.some((s) => s.active)) {
+      newSets[0].active = true;
+    }
+
+    const newDoc: PromptDocument = { ...document, sets: newSets, prompts: newPrompts };
 
     set((state) => ({
       document: newDoc,
@@ -187,6 +235,192 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     vscode.postMessage({ type: 'contentChanged', document: newDoc });
   },
 
+  // Set operations (v1.1)
+  createSet: (afterSetId) => {
+    const { document } = get();
+    if (!document) return '';
+
+    const prevDoc = document;
+    const newId = generateId();
+    const now = new Date().toISOString();
+
+    const newSet: PromptSet = {
+      id: newId,
+      active: true, // New sets become active
+      collapsed: false,
+      created: now,
+    };
+
+    // Deactivate other sets
+    let newSets = document.sets.map((s) => ({ ...s, active: false }));
+
+    // Insert the new set at the right position
+    if (afterSetId) {
+      const afterIndex = newSets.findIndex((s) => s.id === afterSetId);
+      if (afterIndex >= 0) {
+        newSets = [
+          ...newSets.slice(0, afterIndex + 1),
+          newSet,
+          ...newSets.slice(afterIndex + 1),
+        ];
+      } else {
+        newSets.push(newSet);
+      }
+    } else {
+      newSets.push(newSet);
+    }
+
+    // Create an empty prompt in the new set
+    const newPromptId = generateId();
+    const newPrompt: Prompt = {
+      id: newPromptId,
+      content: '',
+      metadata: {
+        id: newPromptId,
+        setId: newId,
+        status: 'queue',
+        created: now,
+      },
+    };
+
+    const newDoc: PromptDocument = {
+      ...document,
+      sets: newSets,
+      prompts: [...document.prompts, newPrompt],
+    };
+
+    set((state) => ({
+      document: newDoc,
+      focusedId: newPromptId,
+      undoStack: [...state.undoStack, { document: prevDoc }],
+      redoStack: [],
+    }));
+
+    vscode.postMessage({ type: 'contentChanged', document: newDoc });
+    return newId;
+  },
+
+  deleteSet: (setId) => {
+    const { document } = get();
+    if (!document) return;
+
+    const prevDoc = document;
+
+    // Remove all prompts in the set
+    const newPrompts = document.prompts.filter((p) => p.metadata.setId !== setId);
+    // Remove the set
+    let newSets = document.sets.filter((s) => s.id !== setId);
+
+    // Ensure at least one set is active
+    if (newSets.length > 0 && !newSets.some((s) => s.active)) {
+      newSets[0].active = true;
+    }
+
+    const newDoc: PromptDocument = { ...document, sets: newSets, prompts: newPrompts };
+
+    set((state) => ({
+      document: newDoc,
+      undoStack: [...state.undoStack, { document: prevDoc }],
+      redoStack: [],
+    }));
+
+    vscode.postMessage({ type: 'contentChanged', document: newDoc });
+  },
+
+  setActiveSet: (setId) => {
+    const { document } = get();
+    if (!document) return;
+
+    const prevDoc = document;
+
+    // Set only this set as active
+    const newSets = document.sets.map((s) => ({
+      ...s,
+      active: s.id === setId,
+    }));
+
+    const newDoc: PromptDocument = { ...document, sets: newSets };
+
+    set((state) => ({
+      document: newDoc,
+      undoStack: [...state.undoStack, { document: prevDoc }],
+      redoStack: [],
+    }));
+
+    vscode.postMessage({ type: 'contentChanged', document: newDoc });
+  },
+
+  toggleSetCollapse: (setId) => {
+    const { document } = get();
+    if (!document) return;
+
+    const prevDoc = document;
+
+    const newSets = document.sets.map((s) =>
+      s.id === setId ? { ...s, collapsed: !s.collapsed } : s
+    );
+
+    const newDoc: PromptDocument = { ...document, sets: newSets };
+
+    set((state) => ({
+      document: newDoc,
+      undoStack: [...state.undoStack, { document: prevDoc }],
+      redoStack: [],
+    }));
+
+    vscode.postMessage({ type: 'contentChanged', document: newDoc });
+  },
+
+  renameSet: (setId, name) => {
+    const { document } = get();
+    if (!document) return;
+
+    const prevDoc = document;
+
+    const newSets = document.sets.map((s) =>
+      s.id === setId ? { ...s, name } : s
+    );
+
+    const newDoc: PromptDocument = { ...document, sets: newSets };
+
+    set((state) => ({
+      document: newDoc,
+      undoStack: [...state.undoStack, { document: prevDoc }],
+      redoStack: [],
+    }));
+
+    vscode.postMessage({ type: 'contentChanged', document: newDoc });
+  },
+
+  movePromptToSet: (promptId, setId) => {
+    const { document } = get();
+    if (!document) return;
+
+    const prevDoc = document;
+
+    const newPrompts = document.prompts.map((p) =>
+      p.id === promptId ? { ...p, metadata: { ...p.metadata, setId } } : p
+    );
+
+    const newDoc: PromptDocument = { ...document, prompts: newPrompts };
+
+    set((state) => ({
+      document: newDoc,
+      undoStack: [...state.undoStack, { document: prevDoc }],
+      redoStack: [],
+    }));
+
+    vscode.postMessage({ type: 'contentChanged', document: newDoc });
+  },
+
+  getActiveSetId: () => {
+    const { document } = get();
+    if (!document || document.sets.length === 0) return null;
+    const activeSet = document.sets.find((s) => s.active);
+    return activeSet?.id || document.sets[0]?.id || null;
+  },
+
+  // Legacy group operations (deprecated)
   toggleGroupCollapse: (groupId) => {
     const { document } = get();
     if (!document) return;

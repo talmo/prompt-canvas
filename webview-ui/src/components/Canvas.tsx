@@ -17,7 +17,7 @@ import {
 import { useCanvasStore } from '../store/useCanvasStore';
 import { useFocusNavigation } from '../hooks/useFocusNavigation';
 import { PromptCell } from './PromptCell';
-import { PromptGroup } from './PromptGroup';
+import { PromptSetContainer } from './PromptSetContainer';
 import type { Prompt, PromptStatus } from '../types';
 
 export function Canvas() {
@@ -29,14 +29,16 @@ export function Canvas() {
   const deletePrompt = useCanvasStore((s) => s.deletePrompt);
   const createPrompt = useCanvasStore((s) => s.createPrompt);
   const reorderPrompts = useCanvasStore((s) => s.reorderPrompts);
-  const toggleGroupCollapse = useCanvasStore((s) => s.toggleGroupCollapse);
+  const toggleSetCollapse = useCanvasStore((s) => s.toggleSetCollapse);
+  const setActiveSet = useCanvasStore((s) => s.setActiveSet);
+  const createSet = useCanvasStore((s) => s.createSet);
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
 
   const textareaRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map());
 
   const prompts = document?.prompts || [];
-  const fileMetadata = document?.fileMetadata || { version: '1.0', groups: {} };
+  const sets = document?.sets || [];
 
   const { handleKeyDown: focusHandleKeyDown } = useFocusNavigation(
     prompts,
@@ -59,11 +61,27 @@ export function Canvas() {
         e.preventDefault();
         redo();
       }
+      // Create new set: Ctrl/Cmd + Shift + Enter
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Enter') {
+        e.preventDefault();
+        // Find the current set based on focused prompt
+        const focusedPrompt = prompts.find((p) => p.id === focusedId);
+        const currentSetId = focusedPrompt?.metadata.setId;
+        createSet(currentSetId);
+      }
+      // Mark current set as active: Ctrl/Cmd + Shift + A
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'a') {
+        e.preventDefault();
+        const focusedPrompt = prompts.find((p) => p.id === focusedId);
+        if (focusedPrompt?.metadata.setId) {
+          setActiveSet(focusedPrompt.metadata.setId);
+        }
+      }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [undo, redo]);
+  }, [undo, redo, createSet, setActiveSet, prompts, focusedId]);
 
   const registerTextarea = useCallback(
     (id: string, el: HTMLTextAreaElement | null) => {
@@ -102,23 +120,24 @@ export function Canvas() {
     [prompts, reorderPrompts]
   );
 
-  // Group prompts by groupId
-  const { grouped, ungrouped } = useMemo(() => {
-    const grouped: Record<string, Prompt[]> = {};
-    const ungrouped: Prompt[] = [];
+  // Group prompts by setId
+  const { promptsBySet, orphanPrompts } = useMemo(() => {
+    const promptsBySet = new Map<string, Prompt[]>();
+    const orphanPrompts: Prompt[] = [];
 
     for (const prompt of prompts) {
-      if (prompt.metadata.group) {
-        if (!grouped[prompt.metadata.group]) {
-          grouped[prompt.metadata.group] = [];
+      const setId = prompt.metadata.setId;
+      if (setId) {
+        if (!promptsBySet.has(setId)) {
+          promptsBySet.set(setId, []);
         }
-        grouped[prompt.metadata.group].push(prompt);
+        promptsBySet.get(setId)!.push(prompt);
       } else {
-        ungrouped.push(prompt);
+        orphanPrompts.push(prompt);
       }
     }
 
-    return { grouped, ungrouped };
+    return { promptsBySet, orphanPrompts };
   }, [prompts]);
 
   const handleContentChange = useCallback(
@@ -145,7 +164,7 @@ export function Canvas() {
   const handleCreateBelow = useCallback(
     (id: string) => {
       const prompt = prompts.find((p) => p.id === id);
-      createPrompt(id, prompt?.metadata.group);
+      createPrompt(id, prompt?.metadata.setId);
     },
     [prompts, createPrompt]
   );
@@ -164,16 +183,27 @@ export function Canvas() {
     [focusHandleKeyDown]
   );
 
-  const handleToggleCollapse = useCallback(
-    (groupId: string) => {
-      toggleGroupCollapse(groupId);
+  const handleToggleSetCollapse = useCallback(
+    (setId: string) => {
+      toggleSetCollapse(setId);
     },
-    [toggleGroupCollapse]
+    [toggleSetCollapse]
+  );
+
+  const handleSetActive = useCallback(
+    (setId: string) => {
+      setActiveSet(setId);
+    },
+    [setActiveSet]
   );
 
   const handleAddPrompt = useCallback(() => {
     createPrompt();
   }, [createPrompt]);
+
+  const handleCreateNewSet = useCallback(() => {
+    createSet();
+  }, [createSet]);
 
   if (!document) {
     return (
@@ -194,74 +224,100 @@ export function Canvas() {
           items={prompts.map((p) => p.id)}
           strategy={verticalListSortingStrategy}
         >
-          {/* Grouped prompts */}
-          {Object.entries(grouped).map(([groupId, groupPrompts]) => {
-            const groupMeta = fileMetadata.groups[groupId] || {
-              collapsed: false,
-            };
+          {/* Render sets in order */}
+          {sets.map((set) => {
+            const setPrompts = promptsBySet.get(set.id) || [];
+            if (setPrompts.length === 0) return null;
+
             return (
-              <PromptGroup
-                key={groupId}
-                groupId={groupId}
-                metadata={groupMeta}
-                prompts={groupPrompts}
+              <PromptSetContainer
+                key={set.id}
+                set={set}
+                prompts={setPrompts}
                 focusedId={focusedId}
                 onFocus={handleFocus}
                 onContentChange={handleContentChange}
                 onStatusChange={handleStatusChange}
                 onDelete={handleDelete}
                 onCreateBelow={handleCreateBelow}
-                onToggleCollapse={() => handleToggleCollapse(groupId)}
+                onToggleCollapse={() => handleToggleSetCollapse(set.id)}
+                onSetActive={() => handleSetActive(set.id)}
                 onKeyDown={handleKeyDown}
                 registerTextarea={registerTextarea}
               />
             );
           })}
 
-          {/* Ungrouped prompts */}
-          <div className="space-y-3">
-            <AnimatePresence initial={false}>
-              {ungrouped.map((prompt) => (
-                <PromptCell
-                  key={prompt.id}
-                  prompt={prompt}
-                  isFocused={focusedId === prompt.id}
-                  onFocus={() => handleFocus(prompt.id)}
-                  onContentChange={(content) =>
-                    handleContentChange(prompt.id, content)
-                  }
-                  onStatusChange={(status) =>
-                    handleStatusChange(prompt.id, status)
-                  }
-                  onDelete={() => handleDelete(prompt.id)}
-                  onCreateBelow={() => handleCreateBelow(prompt.id)}
-                  onKeyDown={(e) => handleKeyDown(prompt.id, e)}
-                  registerTextarea={registerTextarea}
-                />
-              ))}
-            </AnimatePresence>
-          </div>
+          {/* Orphan prompts (no setId) - render directly */}
+          {orphanPrompts.length > 0 && (
+            <div className="space-y-3 mb-6">
+              <AnimatePresence initial={false}>
+                {orphanPrompts.map((prompt) => (
+                  <PromptCell
+                    key={prompt.id}
+                    prompt={prompt}
+                    isFocused={focusedId === prompt.id}
+                    onFocus={() => handleFocus(prompt.id)}
+                    onContentChange={(content) =>
+                      handleContentChange(prompt.id, content)
+                    }
+                    onStatusChange={(status) =>
+                      handleStatusChange(prompt.id, status)
+                    }
+                    onDelete={() => handleDelete(prompt.id)}
+                    onCreateBelow={() => handleCreateBelow(prompt.id)}
+                    onKeyDown={(e) => handleKeyDown(prompt.id, e)}
+                    registerTextarea={registerTextarea}
+                  />
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
         </SortableContext>
       </DndContext>
 
-      {/* Empty state / Add prompt button */}
-      {prompts.length === 0 ? (
+      {/* Action buttons */}
+      <div className="flex gap-2 mt-4">
+        {/* Add prompt to active set */}
+        {prompts.length > 0 && (
+          <button
+            type="button"
+            onClick={handleAddPrompt}
+            className="flex-1 py-3 rounded-lg border border-[var(--vscode-panel-border)] hover:border-[var(--vscode-focusBorder)] transition-fast text-gray-500 hover:text-gray-300 text-sm"
+          >
+            + Add prompt
+          </button>
+        )}
+
+        {/* Create new set */}
+        <button
+          type="button"
+          onClick={handleCreateNewSet}
+          className="px-4 py-3 rounded-lg border-2 border-dashed border-blue-500/50 hover:border-blue-500 transition-fast text-blue-400 hover:text-blue-300 text-sm"
+          title="Create new set (Ctrl+Shift+Enter)"
+        >
+          + New Set
+        </button>
+      </div>
+
+      {/* Empty state */}
+      {prompts.length === 0 && (
         <button
           type="button"
           onClick={handleAddPrompt}
-          className="w-full py-8 rounded-lg border-2 border-dashed border-[var(--vscode-panel-border)] hover:border-[var(--vscode-focusBorder)] transition-fast text-gray-500 hover:text-gray-300"
+          className="w-full mt-4 py-8 rounded-lg border-2 border-dashed border-[var(--vscode-panel-border)] hover:border-[var(--vscode-focusBorder)] transition-fast text-gray-500 hover:text-gray-300"
         >
           Click to add your first prompt
         </button>
-      ) : (
-        <button
-          type="button"
-          onClick={handleAddPrompt}
-          className="w-full mt-4 py-3 rounded-lg border border-[var(--vscode-panel-border)] hover:border-[var(--vscode-focusBorder)] transition-fast text-gray-500 hover:text-gray-300 text-sm"
-        >
-          + Add prompt
-        </button>
       )}
+
+      {/* Keyboard shortcuts hint */}
+      <div className="mt-4 text-xs text-gray-600 flex flex-wrap gap-x-4 gap-y-1">
+        <span><kbd>Shift+Enter</kbd> Add prompt</span>
+        <span><kbd>Ctrl+Shift+Enter</kbd> New set</span>
+        <span><kbd>Ctrl+Shift+A</kbd> Activate set</span>
+        <span><kbd>Ctrl+Z</kbd> Undo</span>
+      </div>
     </div>
   );
 }
