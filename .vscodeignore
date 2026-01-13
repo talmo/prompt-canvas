@@ -1,0 +1,36 @@
+# Development
+.vscode/
+.github/
+.claude/
+.playwright-mcp/
+scratch/
+
+# Test infrastructure
+.wdio-vscode-service/
+e2e/
+src/test/
+*.test.ts
+wdio.conf.ts
+tsconfig.wdio.json
+vitest.config.ts
+
+# Source (we only need compiled output)
+src/
+webview-ui/
+!out/
+
+# Build tools
+esbuild.js
+tsconfig.json
+*.md
+
+# Dependencies (bundled in out/)
+node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Misc
+*.vsix
+*.map
