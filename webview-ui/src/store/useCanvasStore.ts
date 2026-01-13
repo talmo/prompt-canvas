@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { PromptDocument, Prompt, PromptStatus, FileMetadata, PromptSet } from '../types';
+import type { PromptDocument, Prompt, PromptStatus, FileMetadata, PromptSet, ClaudeSessionSummary } from '../types';
 import { vscode } from '../vscode';
 
 function generateId(): string {
@@ -16,6 +16,11 @@ interface CanvasStore {
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
   isExternalUpdate: boolean;
+
+  // Claude Code sessions
+  claudeSessions: ClaudeSessionSummary[];
+  sessionBrowserOpen: boolean;
+  selectedSessionId: string | null;
 
   // Actions
   setDocument: (doc: PromptDocument, isExternal?: boolean) => void;
@@ -44,6 +49,13 @@ interface CanvasStore {
   // History
   undo: () => void;
   redo: () => void;
+
+  // Claude Code session actions
+  setClaudeSessions: (sessions: ClaudeSessionSummary[]) => void;
+  setSessionBrowserOpen: (open: boolean) => void;
+  setSelectedSessionId: (id: string | null) => void;
+  linkPromptToSession: (promptId: string, sessionId: string) => void;
+  unlinkPromptFromSession: (promptId: string) => void;
 }
 
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
@@ -52,6 +64,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   undoStack: [],
   redoStack: [],
   isExternalUpdate: false,
+
+  // Claude Code sessions
+  claudeSessions: [],
+  sessionBrowserOpen: false,
+  selectedSessionId: null,
 
   setDocument: (doc, isExternal = false) => {
     // Ensure document has sets and sessions arrays (backwards compatibility)
@@ -571,5 +588,77 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     vscode.postMessage({ type: 'contentChanged', document: nextEntry.document });
+  },
+
+  // Claude Code session actions
+  setClaudeSessions: (sessions) => set({ claudeSessions: sessions }),
+
+  setSessionBrowserOpen: (open) => set({ sessionBrowserOpen: open }),
+
+  setSelectedSessionId: (id) => set({ selectedSessionId: id }),
+
+  linkPromptToSession: (promptId, sessionId) => {
+    const { document } = get();
+    if (!document) return;
+
+    const prevDoc = document;
+    const now = new Date().toISOString();
+
+    const newPrompts = document.prompts.map((p) =>
+      p.id === promptId
+        ? {
+            ...p,
+            metadata: {
+              ...p.metadata,
+              claudeSessionId: sessionId,
+              executedAt: now,
+            },
+          }
+        : p
+    );
+
+    const newDoc: PromptDocument = { ...document, prompts: newPrompts };
+
+    set((state) => ({
+      document: newDoc,
+      undoStack: [...state.undoStack, { document: prevDoc }],
+      redoStack: [],
+    }));
+
+    vscode.postMessage({ type: 'contentChanged', document: newDoc });
+    vscode.postMessage({ type: 'linkSession', promptId, sessionId });
+  },
+
+  unlinkPromptFromSession: (promptId) => {
+    const { document } = get();
+    if (!document) return;
+
+    const prevDoc = document;
+
+    const newPrompts = document.prompts.map((p) =>
+      p.id === promptId
+        ? {
+            ...p,
+            metadata: {
+              ...p.metadata,
+              claudeSessionId: undefined,
+              claudeMessageId: undefined,
+              executedAt: undefined,
+              responsePreview: undefined,
+            },
+          }
+        : p
+    );
+
+    const newDoc: PromptDocument = { ...document, prompts: newPrompts };
+
+    set((state) => ({
+      document: newDoc,
+      undoStack: [...state.undoStack, { document: prevDoc }],
+      redoStack: [],
+    }));
+
+    vscode.postMessage({ type: 'contentChanged', document: newDoc });
+    vscode.postMessage({ type: 'unlinkSession', promptId });
   },
 }));

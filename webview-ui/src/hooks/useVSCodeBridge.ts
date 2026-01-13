@@ -5,6 +5,7 @@ import { vscode } from '../vscode';
 
 export function useVSCodeBridge() {
   const setDocument = useCanvasStore((s) => s.setDocument);
+  const setClaudeSessions = useCanvasStore((s) => s.setClaudeSessions);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent<ExtensionMessage>) => {
@@ -18,6 +19,13 @@ export function useVSCodeBridge() {
           // Only update if this is an external change
           setDocument(message.document, true);
           break;
+        case 'sessionsUpdated':
+          setClaudeSessions(message.sessions);
+          break;
+        case 'responseLoaded':
+          // Response loaded - could update a preview cache here
+          console.log('Response loaded for prompt:', message.promptId);
+          break;
       }
     };
 
@@ -29,5 +37,5 @@ export function useVSCodeBridge() {
     return () => {
       window.removeEventListener('message', handleMessage);
     };
-  }, [setDocument]);
+  }, [setDocument, setClaudeSessions]);
 }

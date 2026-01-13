@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import type { Prompt, PromptStatus } from '../types';
 import { StatusBadge } from './StatusBadge';
 import { Toolbar } from './Toolbar';
+import { ResponsePreview } from './ResponsePreview';
 import { useTUIPasteCleaner } from '../hooks/useTUIPasteCleaner';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -133,6 +134,16 @@ export const PromptCell = forwardRef<HTMLDivElement, PromptCellProps>(
               <DragHandle />
             </button>
             <StatusBadge status={prompt.metadata.status} onClick={cycleStatus} />
+            {/* Claude session indicator */}
+            {prompt.metadata.claudeSessionId && (
+              <span
+                className="claude-session-indicator"
+                title={`Linked to Claude session`}
+                data-testid="claude-indicator"
+              >
+                linked
+              </span>
+            )}
           </div>
           <div className="opacity-0 group-hover:opacity-100 transition-fast">
             <Toolbar
@@ -177,6 +188,18 @@ export const PromptCell = forwardRef<HTMLDivElement, PromptCellProps>(
             >
               {prompt.metadata.folderLink}
             </button>
+          </div>
+        )}
+
+        {/* Claude response preview (if linked) */}
+        {prompt.metadata.claudeSessionId && (
+          <div className="px-3 pb-3">
+            <ResponsePreview
+              claudeSessionId={prompt.metadata.claudeSessionId}
+              claudeMessageId={prompt.metadata.claudeMessageId}
+              responsePreview={prompt.metadata.responsePreview}
+              executedAt={prompt.metadata.executedAt}
+            />
           </div>
         )}
       </motion.div>

@@ -39,6 +39,12 @@ export interface PromptMetadata {
   created: string;
   updated?: string;
   folderLink?: string;
+
+  // Claude Code integration fields
+  claudeSessionId?: string; // UUID linking to Claude Code session
+  claudeMessageId?: string; // UUID of specific message in session
+  executedAt?: string; // ISO timestamp when sent to Claude
+  responsePreview?: string; // First ~200 chars of response (cached)
 }
 
 export interface Prompt {
@@ -55,13 +61,31 @@ export interface PromptDocument {
   trailingNewline: boolean;
 }
 
+// Claude session info (simplified for webview)
+export interface ClaudeSessionSummary {
+  sessionId: string;
+  projectPath: string;
+  startTime: string; // ISO string (dates are serialized for postMessage)
+  lastTime: string;
+  messageCount: number;
+  firstPrompt: string;
+  summaries: string[];
+}
+
 // Message types for extension <-> webview communication
 export type ExtensionMessage =
   | { type: 'documentLoaded'; document: PromptDocument }
-  | { type: 'documentUpdated'; document: PromptDocument };
+  | { type: 'documentUpdated'; document: PromptDocument }
+  // Claude session messages
+  | { type: 'sessionsUpdated'; sessions: ClaudeSessionSummary[] }
+  | { type: 'responseLoaded'; promptId: string; response: string };
 
 export type WebviewMessage =
   | { type: 'contentChanged'; document: PromptDocument }
   | { type: 'copyToClipboard'; text: string }
   | { type: 'openFolder'; path: string }
-  | { type: 'ready' };
+  | { type: 'ready' }
+  // Claude session messages
+  | { type: 'linkSession'; promptId: string; sessionId: string }
+  | { type: 'unlinkSession'; promptId: string }
+  | { type: 'getResponse'; sessionId: string; messageId?: string };

@@ -363,5 +363,44 @@ describe('parser', () => {
       expect(reparsed.prompts[0].content).toContain('## Sub-step');
       expect(reparsed.prompts[0].content).toContain('### Notes');
     });
+
+    it('Claude Code metadata fields round-trip correctly', () => {
+      const doc: PromptDocument = {
+        fileMetadata: { version: '2.0', groups: {} },
+        sets: [
+          { id: 'set1', active: true, collapsed: false, created: '2024-01-01T00:00:00Z' },
+        ],
+        sessions: [],
+        prompts: [
+          {
+            id: 'p1',
+            content: 'Research the codebase',
+            metadata: {
+              id: 'p1',
+              setId: 'set1',
+              status: 'done',
+              created: '2024-01-01T00:00:00Z',
+              claudeSessionId: 'abc-123-def-456',
+              claudeMessageId: 'msg-789',
+              executedAt: '2024-01-01T10:00:00Z',
+              responsePreview: 'I analyzed the codebase and found...'
+            },
+          },
+        ],
+        trailingNewline: true,
+      };
+
+      const serialized = serialize(doc);
+
+      // Verify metadata is in the serialized output
+      expect(serialized).toContain('claudeSessionId');
+      expect(serialized).toContain('abc-123-def-456');
+
+      const reparsed = parse(serialized);
+      expect(reparsed.prompts[0].metadata.claudeSessionId).toBe('abc-123-def-456');
+      expect(reparsed.prompts[0].metadata.claudeMessageId).toBe('msg-789');
+      expect(reparsed.prompts[0].metadata.executedAt).toBe('2024-01-01T10:00:00Z');
+      expect(reparsed.prompts[0].metadata.responsePreview).toBe('I analyzed the codebase and found...');
+    });
   });
 });

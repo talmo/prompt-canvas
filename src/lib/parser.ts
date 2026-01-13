@@ -281,6 +281,11 @@ function parseV20Format(
           created: (metadata.created as string) || now,
           updated: metadata.updated as string | undefined,
           folderLink: metadata.folderLink as string | undefined,
+          // Claude Code integration fields
+          claudeSessionId: metadata.claudeSessionId as string | undefined,
+          claudeMessageId: metadata.claudeMessageId as string | undefined,
+          executedAt: metadata.executedAt as string | undefined,
+          responsePreview: metadata.responsePreview as string | undefined,
         },
       };
       currentPromptContent = [];
@@ -625,6 +630,11 @@ export function serialize(doc: PromptDocument): string {
         if (prompt.metadata.created) promptMeta.created = prompt.metadata.created;
         if (prompt.metadata.updated) promptMeta.updated = prompt.metadata.updated;
         if (prompt.metadata.folderLink) promptMeta.folderLink = prompt.metadata.folderLink;
+        // Claude Code integration fields
+        if (prompt.metadata.claudeSessionId) promptMeta.claudeSessionId = prompt.metadata.claudeSessionId;
+        if (prompt.metadata.claudeMessageId) promptMeta.claudeMessageId = prompt.metadata.claudeMessageId;
+        if (prompt.metadata.executedAt) promptMeta.executedAt = prompt.metadata.executedAt;
+        if (prompt.metadata.responsePreview) promptMeta.responsePreview = prompt.metadata.responsePreview;
         promptStr += `\n<!-- ${JSON.stringify(promptMeta)} -->`;
 
         if (prompt.content) {

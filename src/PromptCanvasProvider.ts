@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { parse, serialize } from './lib/parser';
-import type { PromptDocument, WebviewMessage } from './lib/types';
+import type { PromptDocument, WebviewMessage, ClaudeSessionSummary } from './lib/types';
+import { ClaudeSessionService } from './lib/ClaudeSessionService';
+import { getResponseForMessage, type SessionInfo } from './lib/claudeSession';
 
 export class PromptCanvasProvider implements vscode.CustomTextEditorProvider {
   public static readonly viewType = 'promptCanvas.editor';
@@ -23,6 +25,33 @@ export class PromptCanvasProvider implements vscode.CustomTextEditorProvider {
 
     webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
 
+    // Initialize Claude session service for this project
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+    const projectPath = workspaceFolder?.uri.fsPath || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    const sessionService = new ClaudeSessionService(projectPath);
+
+    // Helper to convert SessionInfo to ClaudeSessionSummary (serialize dates)
+    const toSessionSummary = (session: SessionInfo): ClaudeSessionSummary => ({
+      sessionId: session.sessionId,
+      projectPath: session.projectPath,
+      startTime: session.startTime.toISOString(),
+      lastTime: session.lastTime.toISOString(),
+      messageCount: session.messageCount,
+      firstPrompt: session.firstPrompt,
+      summaries: session.summaries,
+    });
+
+    // Helper to send sessions to webview
+    const sendSessions = (sessions: SessionInfo[]) => {
+      webviewPanel.webview.postMessage({
+        type: 'sessionsUpdated',
+        sessions: sessions.map(toSessionSummary)
+      });
+    };
+
+    // Subscribe to session changes
+    const sessionSubscription = sessionService.onSessionsChanged(sendSessions);
+
     // Wait for webview to be ready, then send document
     const sendDocument = () => {
       const promptDoc = parse(document.getText());
@@ -37,6 +66,10 @@ export class PromptCanvasProvider implements vscode.CustomTextEditorProvider {
       switch (message.type) {
         case 'ready':
           sendDocument();
+          // Initialize session service after webview is ready
+          sessionService.initialize().catch(err => {
+            console.error('Failed to initialize Claude session service:', err);
+          });
           break;
         case 'contentChanged':
           await this.updateDocument(document, message.document);
@@ -52,6 +85,24 @@ export class PromptCanvasProvider implements vscode.CustomTextEditorProvider {
             vscode.window.showErrorMessage(`Could not open folder: ${message.path}`);
           }
           break;
+        case 'getResponse': {
+          const session = sessionService.getSession(message.sessionId);
+          if (session && message.messageId) {
+            try {
+              const response = await getResponseForMessage(session.filePath, message.messageId);
+              if (response) {
+                webviewPanel.webview.postMessage({
+                  type: 'responseLoaded',
+                  promptId: message.messageId,
+                  response
+                });
+              }
+            } catch (err) {
+              console.error('Failed to get response:', err);
+            }
+          }
+          break;
+        }
       }
     });
 
@@ -78,6 +129,8 @@ export class PromptCanvasProvider implements vscode.CustomTextEditorProvider {
     webviewPanel.onDidDispose(() => {
       messageSubscription.dispose();
       changeSubscription.dispose();
+      sessionSubscription.dispose();
+      sessionService.dispose();
     });
   }
 
