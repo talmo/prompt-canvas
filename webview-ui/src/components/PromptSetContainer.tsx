@@ -1,11 +1,14 @@
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { Prompt, PromptStatus, PromptSet } from '../types';
+import type { Prompt, PromptStatus, PromptSet, Session } from '../types';
 import { PromptCell } from './PromptCell';
+import { SessionContainer } from './SessionContainer';
 
 interface PromptSetContainerProps {
   set: PromptSet;
   prompts: Prompt[];
+  sessions: Session[];
   focusedId: string | null;
   onFocus: (id: string) => void;
   onContentChange: (id: string, content: string) => void;
@@ -14,6 +17,9 @@ interface PromptSetContainerProps {
   onCreateBelow: (id: string) => void;
   onToggleCollapse: () => void;
   onSetActive: () => void;
+  onRename: (name: string) => void;
+  onToggleSessionCollapse: (sessionId: string) => void;
+  onRenameSession: (sessionId: string, name: string) => void;
   onKeyDown: (promptId: string, e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   registerTextarea: (id: string, el: HTMLTextAreaElement | null) => void;
 }
@@ -21,6 +27,7 @@ interface PromptSetContainerProps {
 export function PromptSetContainer({
   set,
   prompts,
+  sessions,
   focusedId,
   onFocus,
   onContentChange,
@@ -29,12 +36,73 @@ export function PromptSetContainer({
   onCreateBelow,
   onToggleCollapse,
   onSetActive,
+  onRename,
+  onToggleSessionCollapse,
+  onRenameSession,
   onKeyDown,
   registerTextarea,
 }: PromptSetContainerProps) {
   const isCollapsed = set.collapsed;
   const isActive = set.active;
-  const setName = set.name || `Set ${set.id.slice(0, 6)}`;
+  const defaultName = `Set ${set.id.slice(0, 6)}`;
+  const setName = set.name || defaultName;
+
+  // Group prompts by session
+  const { promptsBySession, orphanPrompts } = useMemo(() => {
+    const promptsBySession = new Map<string, Prompt[]>();
+    const orphanPrompts: Prompt[] = [];
+
+    for (const prompt of prompts) {
+      const sessionId = prompt.metadata.sessionId;
+      if (sessionId) {
+        if (!promptsBySession.has(sessionId)) {
+          promptsBySession.set(sessionId, []);
+        }
+        promptsBySession.get(sessionId)!.push(prompt);
+      } else {
+        orphanPrompts.push(prompt);
+      }
+    }
+
+    return { promptsBySession, orphanPrompts };
+  }, [prompts]);
+
+  // Editable name state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(set.name || '');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus input when entering edit mode
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleStartEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditValue(set.name || '');
+    setIsEditing(true);
+  };
+
+  const handleFinishEdit = () => {
+    const trimmed = editValue.trim();
+    // Only save if changed from current name
+    if (trimmed !== (set.name || '')) {
+      onRename(trimmed);
+    }
+    setIsEditing(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleFinishEdit();
+    } else if (e.key === 'Escape') {
+      setEditValue(set.name || '');
+      setIsEditing(false);
+    }
+  };
 
   // Count prompts by status
   const statusCounts = prompts.reduce(
@@ -77,23 +145,49 @@ export function PromptSetContainer({
           data-set-id={set.id}
           data-collapsed={isCollapsed}
           className={clsx(
-            'flex items-center gap-2 flex-1',
+            'flex items-center gap-2',
             'text-left text-sm font-medium',
             'hover:opacity-80 transition-fast'
           )}
         >
           <ChevronIcon isOpen={!isCollapsed} />
-          <span
+        </button>
+
+        {/* Editable set name */}
+        {isEditing ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleFinishEdit}
+            onKeyDown={handleKeyDown}
+            placeholder="Set name..."
             className={clsx(
-              'flex-1',
+              'flex-1 px-2 py-0.5 rounded text-sm font-medium',
+              'bg-[var(--vscode-input-background)]',
+              'border border-[var(--vscode-input-border)]',
+              'text-[var(--vscode-input-foreground)]',
+              'focus:outline-none focus:border-blue-500'
+            )}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={handleStartEdit}
+            className={clsx(
+              'flex-1 text-left text-sm font-medium px-1 rounded',
+              'hover:bg-[var(--vscode-list-hoverBackground)] transition-fast',
               isActive
                 ? 'text-blue-400'
-                : 'text-[var(--vscode-editor-foreground)]'
+                : 'text-[var(--vscode-editor-foreground)]',
+              !set.name && 'text-gray-500 italic'
             )}
+            title="Click to rename"
           >
             {setName}
-          </span>
-        </button>
+          </button>
+        )}
 
         {/* Status summary */}
         <div className="flex items-center gap-2 text-xs">
@@ -153,30 +247,58 @@ export function PromptSetContainer({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="p-3 space-y-3">
-              {prompts.map((prompt, index) => (
-                <div key={prompt.id}>
-                  {/* Visual separator between prompts */}
-                  {index > 0 && (
-                    <div className="flex items-center gap-2 py-2">
-                      <div className="flex-1 h-px bg-[var(--vscode-panel-border)] opacity-50" />
-                      <span className="text-gray-600 text-xs">---</span>
-                      <div className="flex-1 h-px bg-[var(--vscode-panel-border)] opacity-50" />
+            <div className="p-3">
+              {/* Render orphan prompts first (prompts without a session) */}
+              {orphanPrompts.length > 0 && (
+                <div className="space-y-3 mb-4">
+                  {orphanPrompts.map((prompt, index) => (
+                    <div key={prompt.id}>
+                      {index > 0 && (
+                        <div className="flex items-center gap-2 py-2">
+                          <div className="flex-1 h-px bg-[var(--vscode-panel-border)] opacity-50" />
+                          <span className="text-gray-600 text-xs">---</span>
+                          <div className="flex-1 h-px bg-[var(--vscode-panel-border)] opacity-50" />
+                        </div>
+                      )}
+                      <PromptCell
+                        prompt={prompt}
+                        isFocused={focusedId === prompt.id}
+                        onFocus={() => onFocus(prompt.id)}
+                        onContentChange={(content) => onContentChange(prompt.id, content)}
+                        onStatusChange={(status) => onStatusChange(prompt.id, status)}
+                        onDelete={() => onDelete(prompt.id)}
+                        onCreateBelow={() => onCreateBelow(prompt.id)}
+                        onKeyDown={(e) => onKeyDown(prompt.id, e)}
+                        registerTextarea={registerTextarea}
+                      />
                     </div>
-                  )}
-                  <PromptCell
-                    prompt={prompt}
-                    isFocused={focusedId === prompt.id}
-                    onFocus={() => onFocus(prompt.id)}
-                    onContentChange={(content) => onContentChange(prompt.id, content)}
-                    onStatusChange={(status) => onStatusChange(prompt.id, status)}
-                    onDelete={() => onDelete(prompt.id)}
-                    onCreateBelow={() => onCreateBelow(prompt.id)}
-                    onKeyDown={(e) => onKeyDown(prompt.id, e)}
+                  ))}
+                </div>
+              )}
+
+              {/* Render sessions with their prompts */}
+              {sessions.map((session) => {
+                const sessionPrompts = promptsBySession.get(session.id) || [];
+                if (sessionPrompts.length === 0) return null;
+
+                return (
+                  <SessionContainer
+                    key={session.id}
+                    session={session}
+                    prompts={sessionPrompts}
+                    focusedId={focusedId}
+                    onFocus={onFocus}
+                    onContentChange={onContentChange}
+                    onStatusChange={onStatusChange}
+                    onDelete={onDelete}
+                    onCreateBelow={onCreateBelow}
+                    onToggleCollapse={() => onToggleSessionCollapse(session.id)}
+                    onRename={(name) => onRenameSession(session.id, name)}
+                    onKeyDown={onKeyDown}
                     registerTextarea={registerTextarea}
                   />
-                </div>
-              ))}
+                );
+              })}
             </div>
           </motion.div>
         )}

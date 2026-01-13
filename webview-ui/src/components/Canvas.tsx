@@ -32,6 +32,9 @@ export function Canvas() {
   const toggleSetCollapse = useCanvasStore((s) => s.toggleSetCollapse);
   const setActiveSet = useCanvasStore((s) => s.setActiveSet);
   const createSet = useCanvasStore((s) => s.createSet);
+  const renameSet = useCanvasStore((s) => s.renameSet);
+  const toggleSessionCollapse = useCanvasStore((s) => s.toggleSessionCollapse);
+  const renameSession = useCanvasStore((s) => s.renameSession);
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
 
@@ -39,6 +42,7 @@ export function Canvas() {
 
   const prompts = document?.prompts || [];
   const sets = document?.sets || [];
+  const sessions = document?.sessions || [];
 
   const { handleKeyDown: focusHandleKeyDown } = useFocusNavigation(
     prompts,
@@ -197,6 +201,27 @@ export function Canvas() {
     [setActiveSet]
   );
 
+  const handleRenameSet = useCallback(
+    (setId: string, name: string) => {
+      renameSet(setId, name);
+    },
+    [renameSet]
+  );
+
+  const handleToggleSessionCollapse = useCallback(
+    (sessionId: string) => {
+      toggleSessionCollapse(sessionId);
+    },
+    [toggleSessionCollapse]
+  );
+
+  const handleRenameSession = useCallback(
+    (sessionId: string, name: string) => {
+      renameSession(sessionId, name);
+    },
+    [renameSession]
+  );
+
   const handleAddPrompt = useCallback(() => {
     createPrompt();
   }, [createPrompt]);
@@ -234,6 +259,7 @@ export function Canvas() {
                 key={set.id}
                 set={set}
                 prompts={setPrompts}
+                sessions={sessions.filter((s) => s.setId === set.id)}
                 focusedId={focusedId}
                 onFocus={handleFocus}
                 onContentChange={handleContentChange}
@@ -242,6 +268,9 @@ export function Canvas() {
                 onCreateBelow={handleCreateBelow}
                 onToggleCollapse={() => handleToggleSetCollapse(set.id)}
                 onSetActive={() => handleSetActive(set.id)}
+                onRename={(name) => handleRenameSet(set.id, name)}
+                onToggleSessionCollapse={handleToggleSessionCollapse}
+                onRenameSession={handleRenameSession}
                 onKeyDown={handleKeyDown}
                 registerTextarea={registerTextarea}
               />
@@ -316,6 +345,7 @@ export function Canvas() {
         <span><kbd>Shift+Enter</kbd> Add prompt</span>
         <span><kbd>Ctrl+Shift+Enter</kbd> New set</span>
         <span><kbd>Ctrl+Shift+A</kbd> Activate set</span>
+        <span><kbd>Ctrl+↑/↓</kbd> Jump prompts</span>
         <span><kbd>Ctrl+Z</kbd> Undo</span>
       </div>
     </div>

@@ -40,6 +40,11 @@ interface CanvasStore {
   movePromptToSet: (promptId: string, setId: string) => void;
   getActiveSetId: () => string | null;
 
+  // Session operations (v2.0 H2 level)
+  createSession: (setId: string, afterSessionId?: string) => string;
+  renameSession: (sessionId: string, name: string) => void;
+  toggleSessionCollapse: (sessionId: string) => void;
+
   // Legacy group operations (deprecated, kept for backwards compatibility)
   toggleGroupCollapse: (groupId: string) => void;
   setPromptGroup: (promptId: string, groupId: string | undefined) => void;
@@ -436,6 +441,87 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     if (!document || document.sets.length === 0) return null;
     const activeSet = document.sets.find((s) => s.active);
     return activeSet?.id || document.sets[0]?.id || null;
+  },
+
+  // Session operations (v2.0 H2 level)
+  createSession: (setId, afterSessionId) => {
+    const { document } = get();
+    if (!document) return '';
+
+    const prevDoc = document;
+    const sessionId = generateId();
+    const now = new Date().toISOString();
+
+    const newSession = {
+      id: sessionId,
+      setId,
+      collapsed: false,
+    };
+
+    let newSessions = [...document.sessions];
+    if (afterSessionId) {
+      const afterIndex = newSessions.findIndex((s) => s.id === afterSessionId);
+      if (afterIndex >= 0) {
+        newSessions.splice(afterIndex + 1, 0, newSession);
+      } else {
+        newSessions.push(newSession);
+      }
+    } else {
+      newSessions.push(newSession);
+    }
+
+    const newDoc: PromptDocument = { ...document, sessions: newSessions };
+
+    set((state) => ({
+      document: newDoc,
+      undoStack: [...state.undoStack, { document: prevDoc }],
+      redoStack: [],
+    }));
+
+    vscode.postMessage({ type: 'contentChanged', document: newDoc });
+    return sessionId;
+  },
+
+  renameSession: (sessionId, name) => {
+    const { document } = get();
+    if (!document) return;
+
+    const prevDoc = document;
+
+    const newSessions = document.sessions.map((s) =>
+      s.id === sessionId ? { ...s, name } : s
+    );
+
+    const newDoc: PromptDocument = { ...document, sessions: newSessions };
+
+    set((state) => ({
+      document: newDoc,
+      undoStack: [...state.undoStack, { document: prevDoc }],
+      redoStack: [],
+    }));
+
+    vscode.postMessage({ type: 'contentChanged', document: newDoc });
+  },
+
+  toggleSessionCollapse: (sessionId) => {
+    const { document } = get();
+    if (!document) return;
+
+    const prevDoc = document;
+
+    const newSessions = document.sessions.map((s) =>
+      s.id === sessionId ? { ...s, collapsed: !s.collapsed } : s
+    );
+
+    const newDoc: PromptDocument = { ...document, sessions: newSessions };
+
+    set((state) => ({
+      document: newDoc,
+      undoStack: [...state.undoStack, { document: prevDoc }],
+      redoStack: [],
+    }));
+
+    vscode.postMessage({ type: 'contentChanged', document: newDoc });
   },
 
   // Legacy group operations (deprecated)

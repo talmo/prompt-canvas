@@ -80,10 +80,93 @@ export const PromptCell = forwardRef<HTMLDivElement, PromptCellProps>(
           return;
         }
 
+        // Enter: Auto-continue lists (- or 1.)
+        if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+          const textarea = e.target as HTMLTextAreaElement;
+          const { value, selectionStart, selectionEnd } = textarea;
+
+          // Only handle if no selection
+          if (selectionStart !== selectionEnd) {
+            return;
+          }
+
+          // Find current line
+          const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
+          const lineEnd = value.indexOf('\n', selectionStart);
+          const currentLine = value.substring(
+            lineStart,
+            lineEnd === -1 ? value.length : lineEnd
+          );
+
+          // Check for unordered list: - or * at start
+          const unorderedMatch = currentLine.match(/^(\s*)([-*])\s(.*)$/);
+          if (unorderedMatch) {
+            const [, indent, bullet, content] = unorderedMatch;
+            // If line is empty (just "- "), remove the bullet on Enter
+            if (!content.trim()) {
+              e.preventDefault();
+              const newValue =
+                value.substring(0, lineStart) +
+                value.substring(selectionStart);
+              onContentChange(newValue);
+              // Set cursor at line start
+              setTimeout(() => {
+                textarea.setSelectionRange(lineStart, lineStart);
+              }, 0);
+              return;
+            }
+            // Continue the list
+            e.preventDefault();
+            const insertion = `\n${indent}${bullet} `;
+            const newValue =
+              value.substring(0, selectionStart) +
+              insertion +
+              value.substring(selectionStart);
+            onContentChange(newValue);
+            setTimeout(() => {
+              const newPos = selectionStart + insertion.length;
+              textarea.setSelectionRange(newPos, newPos);
+            }, 0);
+            return;
+          }
+
+          // Check for ordered list: 1. 2. etc
+          const orderedMatch = currentLine.match(/^(\s*)(\d+)\.\s(.*)$/);
+          if (orderedMatch) {
+            const [, indent, numStr, content] = orderedMatch;
+            // If line is empty (just "1. "), remove the number on Enter
+            if (!content.trim()) {
+              e.preventDefault();
+              const newValue =
+                value.substring(0, lineStart) +
+                value.substring(selectionStart);
+              onContentChange(newValue);
+              setTimeout(() => {
+                textarea.setSelectionRange(lineStart, lineStart);
+              }, 0);
+              return;
+            }
+            // Continue the list with incremented number
+            e.preventDefault();
+            const nextNum = parseInt(numStr, 10) + 1;
+            const insertion = `\n${indent}${nextNum}. `;
+            const newValue =
+              value.substring(0, selectionStart) +
+              insertion +
+              value.substring(selectionStart);
+            onContentChange(newValue);
+            setTimeout(() => {
+              const newPos = selectionStart + insertion.length;
+              textarea.setSelectionRange(newPos, newPos);
+            }, 0);
+            return;
+          }
+        }
+
         // Pass to focus navigation
         onKeyDown(e);
       },
-      [onKeyDown, onCreateBelow]
+      [onKeyDown, onCreateBelow, onContentChange]
     );
 
     const cycleStatus = () => {
